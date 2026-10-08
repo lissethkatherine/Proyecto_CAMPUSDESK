@@ -21,7 +21,7 @@ public class UserRegistrationDTO {
 
     @NotBlank(message = "El nombre es obligatorio")
     @Size(max = 100, message = "El nombre no puede superar los 100 caracteres")
-    private String nombre;
+    private String name;
 
     @NotBlank(message = "El email es obligatorio")
     @Email(message = "Debe proporcionar un email con formato válido")

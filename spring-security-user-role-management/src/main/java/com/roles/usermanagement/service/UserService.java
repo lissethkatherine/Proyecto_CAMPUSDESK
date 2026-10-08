@@ -41,10 +41,10 @@ public class UserService {
 
         // 3. Crear entidad forzando el rol USER por defecto
         User nuevoUsuario = User.builder()
-                .nombre(registrationDTO.getNombre())
+                .name(registrationDTO.getName())
                 .email(registrationDTO.getEmail())
                 .password(passwordEncriptada)
-                .rol(Role.USER) // Asignación estricta del rol USER por defecto
+                .role(Role.USER) // Asignación estricta del rol USER por defecto
                 .build();
 
         // 4. Persistir en PostgreSQL
@@ -53,9 +53,9 @@ public class UserService {
         // 5. Mapear y retornar DTO de respuesta
         return UserResponseDTO.builder()
                 .id(usuarioGuardado.getId())
-                .nombre(usuarioGuardado.getNombre())
+                .name(usuarioGuardado.getName())
                 .email(usuarioGuardado.getEmail())
-                .rol(usuarioGuardado.getRol())
+                .role(usuarioGuardado.getRole())
                 .build();
     }
 

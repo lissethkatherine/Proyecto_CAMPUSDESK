@@ -42,8 +42,8 @@ public class User {
 
     @NotBlank(message = "El nombre es obligatorio")
     @Size(max = 100, message = "El nombre no puede superar los 100 caracteres")
-    @Column(name = "nombre", nullable = false, length = 100)
-    private String nombre;
+    @Column(name = "name", nullable = false, length = 100)
+    private String name;
 
     @NotBlank(message = "El email es obligatorio")
     @Email(message = "Debe proporcionar un formato de email válido")
@@ -57,6 +57,6 @@ public class User {
 
     @NotNull(message = "El rol es obligatorio")
     @Enumerated(EnumType.STRING)
-    @Column(name = "rol", nullable = false, length = 20)
-    private Role rol;
+    @Column(name = "role", nullable = false, length = 20)
+    private Role role;
 }

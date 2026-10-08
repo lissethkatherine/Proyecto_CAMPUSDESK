@@ -1,7 +1,7 @@
 package com.roles.usermanagement.web.controller;
 
 import com.roles.usermanagement.domain.dto.LoginDto;
-import com.roles.usermanagement.web.config.JwtUtil;
+import com.roles.usermanagement.security.JwtTokenProvider;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -16,17 +16,17 @@ import org.springframework.web.bind.annotation.*;
 @Tag(name = "Autenticación", description = "Emisión de tokens JWT")
 public class AuthController {
     private final AuthenticationManager authenticationManager;
-    private final JwtUtil jwtUtil;
+    private final JwtTokenProvider jwtTokenProvider;
     private final com.roles.usermanagement.persistance.repository.UserRepository users;
 
-    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, com.roles.usermanagement.persistance.repository.UserRepository users) {
+    public AuthController(AuthenticationManager authenticationManager, JwtTokenProvider jwtTokenProvider, com.roles.usermanagement.persistance.repository.UserRepository users) {
         this.authenticationManager = authenticationManager;
-        this.jwtUtil = jwtUtil;
+        this.jwtTokenProvider = jwtTokenProvider;
         this.users = users;
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Obtener un token JWT", description = "Valida usuario y contraseÃ±a y devuelve el token como texto.")
+    @Operation(summary = "Obtener un token JWT", description = "Valida usuario y contraseña y devuelve el token como texto.")
     public ResponseEntity<String> login(@RequestBody LoginDto loginDto) {
         if (loginDto.getUsername() == null || loginDto.getUsername().isBlank()
                 || loginDto.getPassword() == null || loginDto.getPassword().isBlank()) {
@@ -35,7 +35,7 @@ public class AuthController {
         try {
             var authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginDto.getUsername(), loginDto.getPassword()));
-            return ResponseEntity.ok(jwtUtil.create(authentication.getName()));
+            return ResponseEntity.ok(jwtTokenProvider.generateToken(authentication.getName(), "USER"));
         } catch (AuthenticationException exception) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Credenciales invalidas o cuenta no disponible");
         }
