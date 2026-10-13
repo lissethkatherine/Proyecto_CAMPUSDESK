@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard · CAMPUSDESK</title>
+  <!-- Guardián de autenticación: Si no hay token, redirige automáticamente a login.html -->
+  <script src="auth-guard.js"></script>
+  <link rel="stylesheet" href="auth.css">
+  <style>
+    .dashboard-container {
+      max-width: 850px;
+      margin: 40px auto;
+      padding: 0 20px;
+      width: 100%;
+    }
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 24px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      margin-bottom: 24px;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .role-badge {
+      background: rgba(16, 185, 129, 0.18);
+      color: var(--primary);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .btn-logout {
+      background: transparent;
+      border: 1px solid #E11D48;
+      color: #FDA4AF;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .btn-logout:hover {
+      background: rgba(225, 29, 72, 0.15);
+    }
+    .dashboard-content {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 32px;
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard-container">
+    <div class="dashboard-header">
+      <div class="user-info">
+        <h2 style="font-size: 18px; margin: 0;">Panel CAMPUSDESK</h2>
+        <span id="userRoleBadge" class="role-badge">USER</span>
+      </div>
+      <div>
+        <span id="userEmailSpan" style="color: var(--text-muted); font-size: 13.5px; margin-right: 16px;"></span>
+        <button class="btn-logout" onclick="AuthGuard.logout()">Cerrar sesión</button>
+      </div>
+    </div>
+
+    <div class="dashboard-content">
+      <h1 style="font-size: 24px; margin-bottom: 12px;">¡Bienvenido al Sistema de Tickets!</h1>
+      <p style="color: var(--text-muted); font-size: 14.5px; line-height: 1.6;">
+        Has iniciado sesión correctamente. La sesión está protegida mediante JWT y validada por <code>auth-guard.js</code>.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('userRoleBadge').textContent = AuthGuard.getRole();
+    document.getElementById('userEmailSpan').textContent = AuthGuard.getUserEmail();
+  </script>
+</body>
+</html>
