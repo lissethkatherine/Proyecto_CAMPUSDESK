@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -68,5 +69,22 @@ public class UserService {
     @Transactional(readOnly = true)
     public Optional<User> findByEmail(String email) {
         return userRepository.findByEmail(email);
+    }
+
+    /**
+     * Obtiene la lista de usuarios con rol TECHNICIAN.
+     *
+     * @return Lista de técnicos disponibles.
+     */
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> getTechnicians() {
+        return userRepository.findByRole(Role.TECHNICIAN).stream()
+                .map(u -> UserResponseDTO.builder()
+                        .id(u.getId())
+                        .name(u.getName())
+                        .email(u.getEmail())
+                        .role(u.getRole())
+                        .build())
+                .toList();
     }
 }

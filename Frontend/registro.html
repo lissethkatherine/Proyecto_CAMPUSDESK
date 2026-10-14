@@ -107,7 +107,8 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const API_URL = 'http://localhost:8050/auth/register';
+    const BASE_URL = localStorage.getItem('api_url') || localStorage.getItem('nexo.base') || 'http://localhost:8056';
+    const API_URL = `${BASE_URL}/auth/register`;
 
     function showAlert(message, type = 'error') {
       alertBox.textContent = message;
@@ -181,7 +182,7 @@
         }, 1500);
 
       } catch (error) {
-        showAlert('Error de conexión con el servidor (http://localhost:8050). Verifica que el backend esté activo.', 'error');
+        showAlert(`Error de conexión con el servidor (${BASE_URL}). Verifica que el backend esté activo.`, 'error');
       } finally {
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<span>Registrarse</span>';

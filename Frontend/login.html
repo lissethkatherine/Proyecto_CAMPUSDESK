@@ -93,7 +93,8 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const API_URL = 'http://localhost:8050/auth/login';
+    const BASE_URL = localStorage.getItem('api_url') || localStorage.getItem('nexo.base') || 'http://localhost:8056';
+    const API_URL = `${BASE_URL}/auth/login`;
 
     function showAlert(message, type = 'error') {
       alertBox.textContent = message;
@@ -140,9 +141,14 @@
 
         // Si es exitoso, almacenar token JWT y rol en sessionStorage
         if (data && data.token) {
+          const role = data.role || data.rol || 'USER';
           sessionStorage.setItem('token', data.token);
-          sessionStorage.setItem('role', data.role || data.rol || 'USER');
+          sessionStorage.setItem('jwt_token', data.token);
+          sessionStorage.setItem('role', role);
+          sessionStorage.setItem('user_role', role);
           sessionStorage.setItem('userEmail', email);
+          sessionStorage.setItem('user_email', email);
+          localStorage.setItem('api_url', BASE_URL);
 
           showAlert('Autenticación exitosa. Redirigiendo...', 'success');
 
@@ -154,7 +160,7 @@
         }
 
       } catch (error) {
-        showAlert('No se pudo conectar con el servidor backend (http://localhost:8050). Verifica que el servicio esté en ejecución.', 'error');
+        showAlert(`No se pudo conectar con el servidor backend (${BASE_URL}). Verifica que el servicio esté en ejecución.`, 'error');
       } finally {
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<span>Iniciar Sesión</span>';

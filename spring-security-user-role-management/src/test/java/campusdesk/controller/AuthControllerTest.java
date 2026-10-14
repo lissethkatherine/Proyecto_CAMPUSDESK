@@ -3,9 +3,11 @@ package campusdesk.controller;
 import campusdesk.dto.LoginRequestDTO;
 import campusdesk.dto.UserRegistrationDTO;
 import campusdesk.dto.UserResponseDTO;
+import campusdesk.dto.UserSessionRedisDto;
 import campusdesk.entity.Role;
 import campusdesk.entity.User;
 import campusdesk.security.JwtTokenProvider;
+import campusdesk.service.RedisSessionService;
 import campusdesk.service.UserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,15 +17,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -44,11 +51,14 @@ class AuthControllerTest {
     @Mock
     private JwtTokenProvider jwtTokenProvider;
 
-    @InjectMocks
+    @Mock
+    private RedisSessionService redisSessionService;
+
     private AuthController authController;
 
     @BeforeEach
     void setUp() {
+        authController = new AuthController(userService, passwordEncoder, jwtTokenProvider, redisSessionService, 28800L);
         mockMvc = MockMvcBuilders.standaloneSetup(authController).build();
     }
 
@@ -83,7 +93,7 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /auth/login - Exitoso debe retornar 200 con JWT y rol")
+    @DisplayName("POST /auth/login - Exitoso debe retornar 200 con JWT y persistir sesión en Redis")
     void testLoginSuccess() throws Exception {
         LoginRequestDTO request = LoginRequestDTO.builder()
                 .email("carlos@campusdesk.com")
@@ -109,6 +119,8 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.token").value("mocked.jwt.token"))
                 .andExpect(jsonPath("$.type").value("Bearer"))
                 .andExpect(jsonPath("$.role").value("USER"));
+
+        verify(redisSessionService, times(1)).saveSession(eq("mocked.jwt.token"), any(UserSessionRedisDto.class), anyLong());
     }
 
     @Test
@@ -134,5 +146,45 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());
+
+        verify(redisSessionService, never()).saveSession(any(), any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("POST /auth/logout - Exitoso debe revocar la sesión en Redis y retornar 200")
+    void testLogoutSuccess() throws Exception {
+        String token = "sample.bearer.token";
+
+        mockMvc.perform(post("/auth/logout")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Sesión cerrada exitosamente"));
+
+        verify(redisSessionService, times(1)).invalidateSession(token);
+    }
+
+    @Test
+    @DisplayName("GET /auth/me - Exitoso debe recuperar sesión de la caché caliente de Redis")
+    void testGetMeFromRedis() throws Exception {
+        String token = "sample.bearer.token";
+        UserSessionRedisDto sessionDto = UserSessionRedisDto.builder()
+                .userId(1L)
+                .username("carlos@campusdesk.com")
+                .email("carlos@campusdesk.com")
+                .role("USER")
+                .authorities(List.of("ROLE_USER", "TICKET_READ"))
+                .token(token)
+                .build();
+
+        when(redisSessionService.getSession(token)).thenReturn(Optional.of(sessionDto));
+
+        mockMvc.perform(get("/auth/me")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(1))
+                .andExpect(jsonPath("$.email").value("carlos@campusdesk.com"))
+                .andExpect(jsonPath("$.role").value("USER"));
+
+        verify(redisSessionService, times(1)).getSession(token);
     }
 }

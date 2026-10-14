@@ -1,10 +1,17 @@
 package campusdesk.security;
 
+import campusdesk.dto.ApiErrorResponse;
+import campusdesk.dto.UserSessionRedisDto;
+import campusdesk.service.RedisSessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -14,20 +21,24 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * Filtro interceptor por petición que extrae y valida el JWT.
- * Asigna la autoridad con prefijo 'ROLE_' para permitir validaciones con @PreAuthorize("hasRole('...')").
+ * Filtro interceptor por petición que extrae, valida criptográficamente el JWT
+ * y verifica la existencia de la sesión activa en el almacenamiento distribuido Redis.
+ * Carga el contexto de seguridad directamente desde la caché caliente sin consultar PostgreSQL.
  */
 @Component
+@RequiredArgsConstructor
+@Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
-
-    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
-        this.jwtTokenProvider = jwtTokenProvider;
-    }
+    private final RedisSessionService redisSessionService;
+    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(
@@ -38,29 +49,74 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
 
-        // Extraer token de la cabecera Bearer
+        // Si la petición contiene cabecera de autorización Bearer
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
 
-            if (!token.isEmpty() && jwtTokenProvider.validateToken(token)) {
-                String username = jwtTokenProvider.getUsernameFromToken(token);
-                String role = jwtTokenProvider.getRoleFromToken(token);
+            if (!token.isEmpty()) {
+                // 1. Validar firma criptográfica y vigencia matemática del JWT
+                if (!jwtTokenProvider.validateToken(token)) {
+                    log.warn("Petición rechazada: Token JWT con firma o expiración inválida en [{}]", request.getRequestURI());
+                    sendUnauthorizedResponse(response, request, "Token JWT inválido o expirado");
+                    return;
+                }
 
-                if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                    // Configurar la autoridad con prefijo ROLE_ para hasRole()
-                    List<SimpleGrantedAuthority> authorities = (role != null)
-                            ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                            : List.of();
+                // 2. Comprobar existencia de la sesión en Redis (Verificación de revocación / logout en tiempo real)
+                Optional<UserSessionRedisDto> sessionOpt = redisSessionService.getSession(token);
+
+                if (sessionOpt.isEmpty()) {
+                    log.warn("Petición rechazada: Sesión no encontrada en Redis (revocada o expirada) para token en [{}]",
+                            request.getRequestURI());
+                    sendUnauthorizedResponse(response, request, "Sesión inválida, expirada o revocada por el usuario");
+                    return;
+                }
+
+                // 3. Establecer Authentication en SecurityContextHolder usando la caché caliente de Redis (CERO SQL)
+                UserSessionRedisDto session = sessionOpt.get();
+
+                if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                    List<SimpleGrantedAuthority> authorities;
+                    if (session.getAuthorities() != null && !session.getAuthorities().isEmpty()) {
+                        authorities = session.getAuthorities().stream()
+                                .map(SimpleGrantedAuthority::new)
+                                .toList();
+                    } else if (session.getRole() != null) {
+                        authorities = List.of(new SimpleGrantedAuthority("ROLE_" + session.getRole()));
+                    } else {
+                        authorities = List.of();
+                    }
 
                     UsernamePasswordAuthenticationToken authenticationToken =
-                            new UsernamePasswordAuthenticationToken(username, null, authorities);
+                            new UsernamePasswordAuthenticationToken(session.getUsername(), null, authorities);
 
                     authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                    log.debug("Usuario [{}] autenticado exitosamente desde caché Redis", session.getUsername());
                 }
             }
         }
 
+        // Continuar cadena de filtros
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Escribe la respuesta JSON estructurada 401 Unauthorized ante tokens o sesiones inválidas.
+     */
+    private void sendUnauthorizedResponse(HttpServletResponse response, HttpServletRequest request, String message)
+            throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+
+        ApiErrorResponse error = ApiErrorResponse.builder()
+                .status(HttpServletResponse.SC_UNAUTHORIZED)
+                .error("Unauthorized")
+                .message(message)
+                .timestamp(Instant.now().toString())
+                .path(request.getRequestURI())
+                .build();
+
+        objectMapper.writeValue(response.getOutputStream(), error);
     }
 }

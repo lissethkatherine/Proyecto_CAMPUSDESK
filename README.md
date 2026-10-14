@@ -43,11 +43,48 @@ sguridad java 21/
 - Gradle Wrapper incluido; no necesitas instalar Gradle.
 - Opcional: Python o Live Server para servir el frontend por HTTP.
 
-El frontend no necesita Node.js, paquetes npm ni compilación.
+## Despliegue Orquestado con Docker Compose (Recomendado)
 
-## Inicio rápido
+CAMPUSDESK se encuentra completamente contenerizado y orquestado mediante Docker Compose para garantizar aislamiento de red, persistencia de datos y ausencia de colisión de puertos:
 
-### 1. Preparar PostgreSQL
+| Componente | Contenedor | Puerto Host | Puerto Interno | Detalle |
+| :--- | :--- | :--- | :--- | :--- |
+| **Frontend** | `campusdesk-frontend` | `http://localhost:5506` | `80` | Nginx Alpine (HTML5/CSS3/Vanilla JS) |
+| **Backend** | `campusdesk-backend` | `http://localhost:8056` | `8056` | Java 21 / Spring Boot 4 / JRE Alpine |
+| **Base de Datos** | `campusdesk-db` | `localhost:5436` | `5432` | PostgreSQL 16 Alpine con volumen `pgdata` |
+
+### Pasos de arranque en Docker:
+
+1. **Asegúrate de que Docker Desktop esté iniciado** en tu máquina.
+2. **Despliegue automatizado**:
+   - En Windows (PowerShell):
+     ```powershell
+     .\deploy.ps1
+     ```
+   - En Linux / macOS / Git Bash:
+     ```bash
+     chmod +x deploy.sh verify.sh
+     ./deploy.sh
+     ```
+   - O directamente con Docker Compose:
+     ```bash
+     docker compose up -d --build
+     ```
+3. **Verificación integral de servicios**:
+   ```powershell
+   .\verify.ps1   # En PowerShell
+   ./verify.sh    # En Bash
+   ```
+
+4. **Credenciales pre-sembradas en BD (`init.sql`)**:
+   - **Administrador**: `superadmin@campusdesk.com` / `SuperAdmin123!` (Rol: `ADMIN`)
+   - **Técnico**: `tecnico@campusdesk.com` / `Password123!` (Rol: `TECHNICIAN`)
+   - **Usuario Estándar**: `carlos@campusdesk.com` / `Password123!` (Rol: `USER`)
+
+---
+
+## Inicio rápido (Modo Local sin Docker)
+
 
 Inicia PostgreSQL y crea la base desde pgAdmin o tu cliente SQL:
 

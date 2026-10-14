@@ -77,9 +77,9 @@
         headers: headers
       });
 
-      // Si el token expiró o fue rechazado (401/403), cerrar sesión automáticamente
-      if (response.status === 401 || response.status === 403) {
-        alert('Tu sesión ha expirado o no tienes permisos. Por favor inicia sesión nuevamente.');
+      // Si el token expiró o es inválido (401), cerrar sesión automáticamente
+      if (response.status === 401) {
+        console.warn('Sesión expirada o token inválido (401). Redirigiendo a login...');
         this.logout();
         return null;
       }

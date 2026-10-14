@@ -27,4 +27,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * @return true si ya existe, false en caso contrario.
      */
     boolean existsByEmail(String email);
+
+    /**
+     * Obtiene la lista de usuarios asociados a un rol específico (ej. TECHNICIAN).
+     */
+    java.util.List<User> findByRole(campusdesk.entity.Role role);
 }

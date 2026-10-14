@@ -46,13 +46,22 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Rutas públicas de autenticación y documentación de API
                         .requestMatchers(
-                                "/auth/**",
-                                "/api/auth/**",
+                                "/auth/register",
+                                "/api/auth/register",
+                                "/auth/login",
+                                "/api/auth/login",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
-                        // Cualquier otra petición debe estar autenticada
+                        // Rutas de autenticación que requieren sesión activa
+                        .requestMatchers(
+                                "/auth/logout",
+                                "/api/auth/logout",
+                                "/auth/me",
+                                "/api/auth/me"
+                        ).authenticated()
+                        // Cualquier otra petición protegida (ej. /api/ticket/**)
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
