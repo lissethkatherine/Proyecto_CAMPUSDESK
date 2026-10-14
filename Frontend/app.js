@@ -31,6 +31,33 @@
     };
   }
 
+  let isHandlingSessionExpiry = false;
+
+  /**
+   * Cliente HTTP centralizado para peticiones protegidas.
+   * Intercepta respuestas 401 (sesión expirada o token revocado) redirigiendo ordenadamente a login.
+   */
+  async function apiFetch(url, options = {}) {
+    const headers = Object.assign({}, getHeaders(), options.headers || {});
+    try {
+      const resp = await fetch(url, { ...options, headers });
+      if (resp.status === 401) {
+        console.warn('Sesión expirada o token inválido (401). Redirigiendo a login...');
+        if (!isHandlingSessionExpiry) {
+          isHandlingSessionExpiry = true;
+          showToast('Tu sesión ha expirado. Redirigiendo al inicio de sesión...', 'error');
+          setTimeout(async () => {
+            await AuthGuard.logout();
+          }, 1200);
+        }
+        return null;
+      }
+      return resp;
+    } catch (err) {
+      throw err;
+    }
+  }
+
   function formatDate(isoStr) {
     if (!isoStr) return '—';
     try {
@@ -88,9 +115,8 @@
     }
 
     try {
-      const resp = await fetch(`${BASE_URL}/api/users/me`, {
-        headers: getHeaders()
-      });
+      const resp = await apiFetch(`${BASE_URL}/api/users/me`);
+      if (!resp) return;
       if (resp.ok) {
         const user = await resp.json();
         AppState.currentUser = user;
@@ -108,9 +134,8 @@
   // 5. Carga de Técnicos (para asignación por Administrador)
   async function loadTechnicians() {
     try {
-      const resp = await fetch(`${BASE_URL}/api/users/technicians`, {
-        headers: getHeaders()
-      });
+      const resp = await apiFetch(`${BASE_URL}/api/users/technicians`);
+      if (!resp) return;
       if (resp.ok) {
         AppState.technicians = await resp.json();
       }
@@ -122,10 +147,8 @@
   // 6. Carga de Métricas del Dashboard (RF-07)
   async function loadDashboardMetrics() {
     try {
-      const resp = await fetch(`${BASE_URL}/api/dashboard/metrics`, {
-        headers: getHeaders()
-      });
-      if (!resp.ok) return;
+      const resp = await apiFetch(`${BASE_URL}/api/dashboard/metrics`);
+      if (!resp || !resp.ok) return;
 
       const data = await resp.json();
       document.getElementById('metricTotal').textContent = data.total ?? 0;
@@ -157,7 +180,8 @@
       if (AppState.activeFilterCategory) params.append('category', AppState.activeFilterCategory);
 
       const url = `${BASE_URL}/api/tickets?${params.toString()}`;
-      const resp = await fetch(url, { headers: getHeaders() });
+      const resp = await apiFetch(url);
+      if (!resp) return;
 
       if (!resp.ok) {
         tbody.innerHTML = `
@@ -215,7 +239,7 @@
     tbody.innerHTML = filtered.map(t => {
       const id = t.id;
       const title = escapeHtml(t.title);
-      const cat = t.category || 'OTRO';
+      const cat = t.category || 'OTROS';
       const prio = t.priority || 'MEDIA';
       const status = t.status || 'ABIERTA';
       const solicitante = t.solicitante ? escapeHtml(t.solicitante.name || t.solicitante.email) : '—';
@@ -272,11 +296,11 @@
     };
 
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets`, {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets`, {
         method: 'POST',
-        headers: getHeaders(),
         body: JSON.stringify(payload)
       });
+      if (!resp) return;
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
@@ -306,9 +330,8 @@
   // 9. Abrir Detalle Integral del Ticket (RF-04, RF-05, RF-06)
   async function openDetailModal(ticketId) {
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}`, {
-        headers: getHeaders()
-      });
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}`);
+      if (!resp) return;
       if (!resp.ok) {
         showToast('No se pudo cargar el detalle del ticket', 'error');
         return;
@@ -469,11 +492,11 @@
 
     const tecnicoId = parseInt(select.value, 10);
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}/assign`, {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/assign`, {
         method: 'PATCH',
-        headers: getHeaders(),
         body: JSON.stringify({ tecnicoId })
       });
+      if (!resp) return;
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
@@ -494,14 +517,14 @@
   // 11. Cambiar Estado en la Máquina de Estados (RF-04)
   async function updateStatus(ticketId, newStatus, defaultComment = '') {
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}/status`, {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/status`, {
         method: 'PATCH',
-        headers: getHeaders(),
         body: JSON.stringify({
           status: newStatus,
           comentario: defaultComment
         })
       });
+      if (!resp) return;
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
@@ -535,9 +558,8 @@
     container.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando notas...</div>';
 
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}/comments`, {
-        headers: getHeaders()
-      });
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/comments`);
+      if (!resp) return;
 
       if (!resp.ok) {
         container.innerHTML = '<div style="color: #64748B; font-size: 13px;">Sin comentarios registrados.</div>';
@@ -609,11 +631,11 @@
     btn.textContent = 'Enviando...';
 
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}/comments`, {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/comments`, {
         method: 'POST',
-        headers: getHeaders(),
         body: JSON.stringify({ content })
       });
+      if (!resp) return;
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
@@ -638,9 +660,8 @@
     timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando historial de auditoría...</div>';
 
     try {
-      const resp = await fetch(`${BASE_URL}/api/tickets/${ticketId}/history`, {
-        headers: getHeaders()
-      });
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/history`);
+      if (!resp) return;
 
       if (!resp.ok) {
         timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Sin historial registrado.</div>';
@@ -710,8 +731,8 @@
   // 15. Vinculación de Eventos en el DOM
   function setupEventListeners() {
     // Logout
-    document.getElementById('btnLogout').addEventListener('click', () => {
-      AuthGuard.logout();
+    document.getElementById('btnLogout').addEventListener('click', async () => {
+      await AuthGuard.logout();
     });
 
     // Refresh

@@ -105,15 +105,43 @@
 
     <!-- Script de autenticación -->
     <script>
-        const storedApiUrl = localStorage.getItem('api_url') || localStorage.getItem('nexo.base') || 'http://localhost:8056';
+        const storedApiUrl = localStorage.getItem('api_url') 
+            || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
         const apiUrlInput = document.getElementById('apiUrl');
         if (apiUrlInput) apiUrlInput.value = storedApiUrl;
+
+        // Verificación de sesión previa validando contrato con el backend (sin confiar a ciegas en el token)
+        (async function verifyExistingSession() {
+            const token = sessionStorage.getItem('token');
+            if (!token) return;
+
+            try {
+                const resp = await fetch(`${storedApiUrl}/auth/me`, {
+                    method: 'GET',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (resp.ok) {
+                    window.location.replace('dashboard.html');
+                } else {
+                    // Token inválido o revocado en Redis: limpiar almacenamiento
+                    sessionStorage.removeItem('token');
+                    sessionStorage.removeItem('jwt_token');
+                    sessionStorage.removeItem('role');
+                    sessionStorage.removeItem('user_role');
+                    sessionStorage.removeItem('userEmail');
+                    sessionStorage.removeItem('user_email');
+                }
+            } catch (e) {
+                // Si el backend no está accesible, no redirigir a ciegas
+            }
+        })();
 
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('email').value.trim();
             const password = document.getElementById('password').value;
-            const baseUrl = (document.getElementById('apiUrl').value || 'http://localhost:8056').trim();
+            const baseUrl = (document.getElementById('apiUrl').value || storedApiUrl).trim();
             const errorDiv = document.getElementById('mensajeError');
             
             errorDiv.style.display = 'none';
@@ -141,8 +169,9 @@
                     
                     window.location.href = 'dashboard.html'; // Redirige al Dashboard
                 } else {
-                    const errorMsg = await response.text();
-                    errorDiv.textContent = 'Credenciales incorrectas o error en el servidor.';
+                    const errData = await response.json().catch(() => null);
+                    const errorMsg = (errData && (errData.message || errData.error)) || 'Credenciales inválidas. Verifica tu correo y contraseña.';
+                    errorDiv.textContent = errorMsg;
                     errorDiv.style.display = 'block';
                 }
             } catch (error) {

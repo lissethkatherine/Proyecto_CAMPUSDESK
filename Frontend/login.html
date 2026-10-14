@@ -93,8 +93,38 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const BASE_URL = localStorage.getItem('api_url') || localStorage.getItem('nexo.base') || 'http://localhost:8056';
+    const BASE_URL = localStorage.getItem('api_url') 
+      || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
     const API_URL = `${BASE_URL}/auth/login`;
+
+    // Verificación de sesión previa validando contrato con el backend (sin confiar a ciegas en el token)
+    (async function verifyExistingSession() {
+      const token = sessionStorage.getItem('token');
+      if (!token) return;
+
+      try {
+        const resp = await fetch(`${BASE_URL}/auth/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+
+        if (resp.ok) {
+          window.location.replace('dashboard.html');
+        } else {
+          // Si el token es inválido o expiró en Redis, purgar almacenamiento local
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('jwt_token');
+          sessionStorage.removeItem('role');
+          sessionStorage.removeItem('user_role');
+          sessionStorage.removeItem('userEmail');
+          sessionStorage.removeItem('user_email');
+        }
+      } catch (e) {
+        // Si el backend no está disponible, no redirigir a ciegas
+      }
+    })();
 
     function showAlert(message, type = 'error') {
       alertBox.textContent = message;

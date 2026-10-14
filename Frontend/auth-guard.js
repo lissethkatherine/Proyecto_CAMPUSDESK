@@ -50,12 +50,35 @@
     },
 
     /**
-     * Cierra la sesión activa y redirige a la página de inicio de sesión.
+     * Cierra la sesión activa notificando al backend (/auth/logout) para revocar
+     * el token en Redis. Si la petición falla, limpia igualmente la sesión local de forma segura.
      */
-    logout: function () {
+    logout: async function () {
+      const token = this.getToken();
+      const baseUrl = localStorage.getItem('api_url') 
+        || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
+
+      if (token) {
+        try {
+          await fetch(`${baseUrl}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            }
+          });
+        } catch (e) {
+          console.warn('Error al notificar logout al backend:', e);
+        }
+      }
+
+      // Limpieza segura de todas las claves de sesión locales
       sessionStorage.removeItem('token');
+      sessionStorage.removeItem('jwt_token');
       sessionStorage.removeItem('role');
+      sessionStorage.removeItem('user_role');
       sessionStorage.removeItem('userEmail');
+      sessionStorage.removeItem('user_email');
       window.location.replace('login.html');
     },
 
@@ -80,7 +103,7 @@
       // Si el token expiró o es inválido (401), cerrar sesión automáticamente
       if (response.status === 401) {
         console.warn('Sesión expirada o token inválido (401). Redirigiendo a login...');
-        this.logout();
+        await this.logout();
         return null;
       }
 

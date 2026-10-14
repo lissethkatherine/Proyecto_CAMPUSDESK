@@ -107,7 +107,8 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const BASE_URL = localStorage.getItem('api_url') || localStorage.getItem('nexo.base') || 'http://localhost:8056';
+    const BASE_URL = localStorage.getItem('api_url') 
+      || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
     const API_URL = `${BASE_URL}/auth/register`;
 
     function showAlert(message, type = 'error') {
@@ -145,7 +146,6 @@
       try {
         const payload = {
           name: nombre,
-          nombre: nombre,
           email: email,
           password: password
         };
