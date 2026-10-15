@@ -1,1097 +1,1291 @@
+/**
+ * CAMPUSDESK - Lógica de Frontend Vanilla JS (TechNova Solutions)
+ * Arquitectura: HTML5 + CSS3 + Fetch API nativa. Sin frameworks externos.
+ * Ciclo de vida de incidencias, máquina de estados, métricas, comentarios, auditoría y administración.
+ */
 'use strict';
 
-const $ = s => document.querySelector(s);
-const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-}[c]));
+(function () {
+  // 1. Configuración de API y URLs
+  const BASE_URL = localStorage.getItem('api_url')
+    || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
 
-const money = v => new Intl.NumberFormat('es-CO', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-}).format(Number(v || 0));
+  // 2. Estado de la Aplicación
+  const AppState = {
+    currentUser: null,
+    tickets: [],
+    technicians: [],
+    users: [],
+    activeTicket: null,
+    activeFilterStatus: '',
+    activeFilterPriority: '',
+    activeFilterCategory: '',
+    searchQuery: '',
+    userFilterRole: '',
+    userSearchQuery: ''
+  };
 
-const date = v => v ? new Date(v).toLocaleString('es-CO') : '—';
-const path = v => encodeURIComponent(v);
+  // 3. Utilidades y Helpers
+  function getHeaders() {
+    const token = AuthGuard.getToken();
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    };
+  }
 
-const state = {
-    token: sessionStorage.getItem('nexo.token'),
-    base: localStorage.getItem('nexo.base') || 'http://localhost:8050',
-    me: null,
-    view: 'home',
-    page: 0,
-    rows: [],
-    cache: {},
-    busy: false
-};
+  let isHandlingSessionExpiry = false;
 
-const sections = {
-    home: { title: 'Inicio', icon: '⌂' },
-    customers: { title: 'Clientes', icon: '♙', prefix: 'CUSTOMER', endpoint: '/api/customers' },
-    products: { title: 'Productos', icon: '▦', prefix: 'PRODUCT', endpoint: '/api/products' },
-    sales: { title: 'Ventas', icon: '↗', prefix: 'SALE', endpoint: '/api/sales' },
-    users: { title: 'Usuarios', icon: '♧' },
-    roles: { title: 'Roles', icon: '◈' },
-    permissions: { title: 'Permisos', icon: '⚿' }
-};
-
-const can = p => state.me?.effectivePermissions?.includes(p);
-const any = ps => ps.some(can);
-
-function visible(view) {
-    if (view === 'home') return true;
-    if (view === 'users') {
-        return any(['USER_READ', 'USER_CREATE', 'USER_UPDATE', 'USER_DELETE', 'ROLE_ASSIGN', 'PERMISSION_ASSIGN']);
+  /**
+   * Cliente HTTP centralizado para peticiones protegidas.
+   * Intercepta respuestas 401 (sesión expirada o token revocado) redirigiendo ordenadamente a login.
+   */
+  async function apiFetch(url, options = {}) {
+    const headers = Object.assign({}, getHeaders(), options.headers || {});
+    try {
+      const resp = await fetch(url, { ...options, headers });
+      if (resp.status === 401) {
+        console.warn('Sesión expirada o token inválido (401). Redirigiendo a login...');
+        if (!isHandlingSessionExpiry) {
+          isHandlingSessionExpiry = true;
+          showToast('Tu sesión ha expirado. Redirigiendo al inicio de sesión...', 'error');
+          setTimeout(async () => {
+            await AuthGuard.logout();
+          }, 1200);
+        }
+        return null;
+      }
+      return resp;
+    } catch (err) {
+      throw err;
     }
-    if (view === 'roles') return can('ROLE_MANAGE');
-    if (view === 'permissions') return can('PERMISSION_MANAGE');
+  }
 
-    const p = sections[view].prefix;
-    return any([p + '_READ', p + '_CREATE', p + '_UPDATE', p + '_DELETE', p + '_CANCEL']);
-}
+  function formatDate(isoStr) {
+    if (!isoStr) return '—';
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleDateString('es-CO', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return isoStr;
+    }
+  }
 
-function toast(message, bad = false) {
-    $('#toast').textContent = message;
-    $('#toast').className = 'visible' + (bad ? ' bad' : '');
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function showToast(message, type = 'success') {
+    const toast = document.getElementById('toastBox');
+    const msg = document.getElementById('toastMessage');
+    if (!toast || !msg) return;
+
+    msg.textContent = message;
+    toast.className = `campus-toast show ${type}`;
+
     clearTimeout(toast.timer);
     toast.timer = setTimeout(() => {
-        $('#toast').className = '';
-    }, 5500);
-}
+      toast.className = 'campus-toast';
+    }, 3800);
+  }
 
-function logout() {
-    state.token = null;
-    state.me = null;
-    state.cache = {};
-    sessionStorage.removeItem('nexo.token');
-    $('#app').hidden = true;
-    $('#login-screen').hidden = false;
-    if ($('#modal').open) $('#modal').close();
-    $('#login-form').password.value = '';
-}
+  // 4. Inicialización de Usuario y Perfil
+  async function initUserProfile() {
+    const role = AuthGuard.getRole();
+    const storedEmail = AuthGuard.getUserEmail();
 
-async function api(url, { method = 'GET', body, auth = true } = {}) {
-    const headers = { Accept: 'application/json, text/plain' };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (auth && state.token) headers.Authorization = 'Bearer ' + state.token;
+    const roleBadge = document.getElementById('navUserRole');
+    const emailSpan = document.getElementById('navUserEmail');
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
 
-    let response;
-    try {
-        response = await fetch(state.base + url, {
-            method,
-            headers,
-            body: body === undefined ? undefined : JSON.stringify(body)
-        });
-    } catch {
-        throw new Error('No se pudo conectar con el servidor. Revisa la URL, Spring Boot y PostgreSQL.');
+    if (roleBadge) {
+      roleBadge.textContent = role;
+      roleBadge.className = `role-pill ${role.toLowerCase()}`;
+    }
+    if (emailSpan) {
+      emailSpan.textContent = storedEmail || 'Usuario';
     }
 
-    const text = await response.text();
-    let data = text;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch {}
-
-    if (!response.ok) {
-        if (auth && (response.status === 401 || (response.status === 403 && url === '/api/auth/me'))) {
-            logout();
-        }
-        let error = typeof data === 'string'
-            ? data
-            : (data?.detail || data?.message || Object.entries(data || {})
-                .filter(([k]) => !['timestamp', 'status', 'error', 'path'].includes(k))
-                .map(([k, v]) => k + ': ' + v)
-                .join('\n'));
-
-        if (response.status === 403) {
-            error = 'Tu cuenta no tiene permiso para esta operación, o la sesión ya no está disponible.';
-        }
-        throw new Error(error || `La operación no se completó (${response.status}).`);
+    // F2: Habilitar botón de navegación a Administración solo para ADMIN
+    if (btnNavAdmin) {
+      if (role === 'ADMIN') {
+        btnNavAdmin.style.display = 'inline-flex';
+      } else {
+        btnNavAdmin.style.display = 'none';
+      }
     }
 
-    return data;
-}
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/users/me`);
+      if (!resp) return;
+      if (resp.ok) {
+        const user = await resp.json();
+        AppState.currentUser = user;
+        if (emailSpan) emailSpan.textContent = user.name || user.email;
+        if (roleBadge) {
+          roleBadge.textContent = user.role;
+          roleBadge.className = `role-pill ${user.role.toLowerCase()}`;
+        }
+        if (btnNavAdmin) {
+          btnNavAdmin.style.display = user.role === 'ADMIN' ? 'inline-flex' : 'none';
+        }
+      }
+    } catch (e) {
+      console.warn('No se pudo refrescar el perfil desde el backend:', e);
+    }
+  }
 
-async function refreshMe() {
-    state.me = await api('/api/auth/me');
-    $('#session-name').textContent = state.me.username;
-    $('#session-role').textContent = state.me.role || 'Sin rol';
-    $('#avatar').textContent = state.me.username.slice(0, 2).toUpperCase();
-    $('#server-label').textContent = state.base;
-    $('#navigation').innerHTML = Object.entries(sections)
-        .filter(([k]) => visible(k))
-        .map(([k, v]) => `
-            <button data-nav="${k}" class="${state.view === k ? 'active' : ''}">
-                <span class="nav-icon">${v.icon}</span>${v.title}
-            </button>
-        `).join('');
-}
+  // 5. Carga de Técnicos (E4: Exclusivo para ADMIN para asignación de incidencias)
+  async function loadTechnicians() {
+    if (AuthGuard.getRole() !== 'ADMIN') {
+      return;
+    }
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/users/technicians`);
+      if (!resp) return;
+      if (resp.ok) {
+        AppState.technicians = await resp.json();
+      }
+    } catch (e) {
+      console.warn('Error al cargar lista de técnicos:', e);
+    }
+  }
 
-async function enter() {
-    await refreshMe();
-    $('#login-screen').hidden = true;
-    $('#app').hidden = false;
-    await navigate('home');
-}
-
-$('#login-form').base.value = state.base;
-
-$('#login-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = e.currentTarget;
-    const b = f.querySelector('button[type=submit]');
-    b.disabled = true;
-    $('#login-error').textContent = '';
+  // 5.1 Carga de Todos los Usuarios (F2: Exclusivo para ADMIN)
+  async function loadAdminUsers() {
+    if (AuthGuard.getRole() !== 'ADMIN') return;
+    const tbody = document.getElementById('usersTableBody');
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 30px; color: #64748B;">
+            Consultando usuarios registrados...
+          </td>
+        </tr>
+      `;
+    }
 
     try {
-        const base = f.base.value.trim().replace(/\/+$/, '');
-        const u = new URL(base);
-        if (!['http:', 'https:'].includes(u.protocol)) {
-            throw new Error('Utiliza una URL HTTP o HTTPS.');
+      const resp = await apiFetch(`${BASE_URL}/api/users`);
+      if (!resp || !resp.ok) {
+        if (tbody) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" style="text-align: center; padding: 30px; color: #E11D48;">
+                Error al cargar usuarios del servidor.
+              </td>
+            </tr>
+          `;
         }
+        return;
+      }
 
-        state.base = base;
-        localStorage.setItem('nexo.base', base);
-        state.token = await api('/api/auth/login', {
-            method: 'POST',
-            auth: false,
-            body: {
-                username: f.username.value.trim(),
-                password: f.password.value
-            }
-        });
-        sessionStorage.setItem('nexo.token', state.token);
-        await enter();
-        f.password.value = '';
-    } catch (error) {
-        logout();
-        $('#login-error').textContent = error.message;
-    } finally {
-        b.disabled = false;
+      AppState.users = await resp.json();
+      renderAdminUsersTable();
+    } catch (e) {
+      console.error('Error cargando usuarios:', e);
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="text-align: center; padding: 30px; color: #E11D48;">
+              Fallo de conexión al cargar usuarios.
+            </td>
+          </tr>
+        `;
+      }
     }
-});
+  }
 
-$('#logout').onclick = logout;
-$('#menu-toggle').onclick = () => $('#sidebar').classList.toggle('open');
-$('#navigation').onclick = e => {
-    const b = e.target.closest('[data-nav]');
-    if (b) navigate(b.dataset.nav);
-};
+  function renderAdminUsersTable() {
+    const tbody = document.getElementById('usersTableBody');
+    if (!tbody) return;
 
-function heading(title, subtitle, actions = '') {
-    return `
-        <div class="page-heading">
-            <div>
-                <span class="eyebrow">ESPACIO DE TRABAJO</span>
-                <h1>${esc(title)}</h1>
-                <p>${esc(subtitle)}</p>
-            </div>
-            <div class="toolbar">${actions}</div>
-        </div>
-    `;
-}
+    const query = AppState.userSearchQuery.toLowerCase().trim();
+    const roleFilter = AppState.userFilterRole;
 
-function button(action, label, data = '', className = 'primary') {
-    return `<button type="button" class="${className}" data-action="${action}" ${data}>${label}</button>`;
-}
-
-function badge(active) {
-    return `<span class="badge ${active ? '' : 'off'}">${active ? 'Activo' : 'Inactivo'}</span>`;
-}
-
-function chips(values) {
-    return `
-        <div class="chips">
-            ${(values || []).map(v => `<span class="chip">${esc(v)}</span>`).join('') || '<span class="muted">Sin permisos</span>'}
-        </div>
-    `;
-}
-
-async function navigate(view, page = 0) {
-    if (!visible(view)) view = 'home';
-    state.view = view;
-    state.page = page;
-    $('#sidebar').classList.remove('open');
-    $('#crumb').textContent = sections[view].title;
-    $('#navigation').querySelectorAll('button').forEach(b => {
-        b.classList.toggle('active', b.dataset.nav === view);
+    const filtered = AppState.users.filter(u => {
+      const matchesRole = !roleFilter || u.role === roleFilter;
+      const matchesQuery = !query ||
+        (u.name || '').toLowerCase().includes(query) ||
+        (u.email || '').toLowerCase().includes(query) ||
+        String(u.id).includes(query);
+      return matchesRole && matchesQuery;
     });
 
-    $('#content').innerHTML = '<div class="empty">Cargando tu espacio…</div>';
+    if (filtered.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 35px; color: #64748B;">
+            No se encontraron usuarios coincidentes con el criterio de búsqueda.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(u => {
+      const roleClass = (u.role || 'USER').toLowerCase();
+      return `
+        <tr>
+          <td style="font-weight: 700; color: #475569;">#${u.id}</td>
+          <td style="font-weight: 600; color: #0F172A;">${escapeHtml(u.name)}</td>
+          <td style="color: #475569;">${escapeHtml(u.email)}</td>
+          <td><span class="role-pill ${roleClass}">${u.role}</span></td>
+          <td style="text-align: right; white-space: nowrap;">
+            <button class="btn-campus-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="window.CampusDesk.filterTicketsByUser('${escapeHtml(u.email)}')">
+              Ver Incidencias
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // 6. Carga de Métricas del Dashboard (RF-07)
+  async function loadDashboardMetrics() {
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/dashboard/metrics`);
+      if (!resp || !resp.ok) return;
+
+      const data = await resp.json();
+      const mTotal = document.getElementById('metricTotal');
+      const mAbiertas = document.getElementById('metricAbiertas');
+      const mAsignadas = document.getElementById('metricAsignadas');
+      const mProceso = document.getElementById('metricEnProceso');
+      const mResueltas = document.getElementById('metricResueltas');
+      const mCerradas = document.getElementById('metricCerradas');
+
+      if (mTotal) mTotal.textContent = data.total ?? 0;
+      if (mAbiertas) mAbiertas.textContent = data.abiertas ?? 0;
+      if (mAsignadas) mAsignadas.textContent = data.asignadas ?? 0;
+      if (mProceso) mProceso.textContent = data.enProceso ?? 0;
+      if (mResueltas) mResueltas.textContent = data.resueltas ?? 0;
+      if (mCerradas) mCerradas.textContent = data.cerradas ?? 0;
+    } catch (e) {
+      console.error('Error cargando métricas:', e);
+    }
+  }
+
+  // 7. Carga y Filtrado de Incidencias (RF-03, RF-08)
+  async function loadTickets() {
+    const tbody = document.getElementById('ticketsTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" style="text-align: center; padding: 30px; color: #64748B;">
+          Actualizando lista de incidencias...
+        </td>
+      </tr>
+    `;
 
     try {
-        await render();
-    } catch (error) {
-        $('#content').innerHTML = heading(sections[view].title, 'No se pudo cargar la información') + `
-            <div class="panel empty">
-                ${esc(error.message)}<br><br>
-                ${button('reload', 'Reintentar')}
-            </div>
+      const params = new URLSearchParams();
+      if (AppState.activeFilterStatus) params.append('status', AppState.activeFilterStatus);
+      if (AppState.activeFilterPriority) params.append('priority', AppState.activeFilterPriority);
+      if (AppState.activeFilterCategory) params.append('category', AppState.activeFilterCategory);
+
+      const url = `${BASE_URL}/api/tickets?${params.toString()}`;
+      const resp = await apiFetch(url);
+      if (!resp) return;
+
+      if (!resp.ok) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="9" style="text-align: center; padding: 30px; color: #E11D48;">
+              Error al obtener incidencias del servidor (${resp.status}).
+            </td>
+          </tr>
         `;
+        return;
+      }
+
+      AppState.tickets = await resp.json();
+      renderTicketsTable();
+    } catch (e) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align: center; padding: 30px; color: #E11D48;">
+            No se pudo conectar con el servicio de tickets.
+          </td>
+        </tr>
+      `;
+      console.error(e);
     }
-}
+  }
 
-async function render() {
-    if (state.view === 'home') return dashboard();
+  function renderTicketsTable() {
+    const tbody = document.getElementById('ticketsTableBody');
+    if (!tbody) return;
 
-    const view = state.view;
-    const conf = sections[view];
-    let actions = button('reload', '↻ Actualizar', '', 'secondary');
-    let rows = [];
-    let read = false;
+    const query = AppState.searchQuery.toLowerCase().trim();
 
-    if (['customers', 'products', 'sales'].includes(view)) {
-        read = can(conf.prefix + '_READ');
+    const filtered = AppState.tickets.filter(t => {
+      if (!query) return true;
+      const titleMatch = (t.title || '').toLowerCase().includes(query);
+      const descMatch = (t.description || '').toLowerCase().includes(query);
+      const idMatch = String(t.id).includes(query);
+      const reqMatch = t.solicitante && (t.solicitante.name || t.solicitante.email || '').toLowerCase().includes(query);
+      const techMatch = t.tecnico && (t.tecnico.name || t.tecnico.email || '').toLowerCase().includes(query);
+      return titleMatch || descMatch || idMatch || reqMatch || techMatch;
+    });
 
-        if (can(conf.prefix + '_CREATE')) {
-            actions = button('create', '＋ ' + (view === 'sales' ? 'Nueva venta' : view === 'products' ? 'Nuevo producto' : 'Nuevo cliente')) + actions;
-        }
-        if (!read && view !== 'sales' && can(conf.prefix + '_UPDATE')) {
-            actions += button('edit-business-id', 'Editar por ID', '', 'secondary');
-        }
-        if (!read && view !== 'sales' && can(conf.prefix + '_DELETE')) {
-            actions += button('deactivate-business-id', 'Desactivar por ID', '', 'secondary');
-        }
-        if (!read && view === 'sales' && can('SALE_CANCEL')) {
-            actions += button('cancel-sale-id', 'Anular por ID', '', 'secondary');
-        }
-
-        if (read) {
-            const result = await api(conf.endpoint + `?page=${state.page}&size=20`);
-            rows = result.content || [];
-            state.total = result.totalElements || 0;
-            state.pages = result.totalPages || 0;
-        }
-    } else if (view === 'users') {
-        read = can('USER_READ');
-
-        if (can('USER_CREATE')) actions = button('create', '＋ Nuevo usuario') + actions;
-        if (can('ROLE_ASSIGN')) actions += button('user-role', 'Asignar rol', '', 'secondary');
-        if (can('PERMISSION_ASSIGN')) {
-            actions += button('user-permission', 'Dar permiso', '', 'secondary') + button('revoke-permission-id', 'Retirar permiso', '', 'secondary');
-        }
-        if (!read && can('USER_UPDATE')) actions += button('edit-named', 'Actualizar cuenta', '', 'secondary');
-        if (!read && can('USER_DELETE')) actions += button('delete-named', 'Eliminar cuenta', '', 'secondary');
-
-        if (read) rows = await api('/api/user/all');
-    } else if (view === 'roles') {
-        read = true;
-        rows = await api('/api/roles');
-        actions = button('create', '＋ Nuevo rol') + actions;
-    } else {
-        read = true;
-        rows = (await api('/api/permissions')).map(name => ({ name }));
-        actions = button('create', '＋ Nuevo permiso') + actions;
+    if (filtered.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align: center; padding: 40px; color: #64748B;">
+            <div style="font-size: 24px; margin-bottom: 8px;">📋</div>
+            <div style="font-weight: 600; font-size: 15px; color: #334155;">No se encontraron incidencias</div>
+            <div style="font-size: 13px; margin-top: 4px;">Modifica los filtros o crea una nueva incidencia con el botón superior.</div>
+          </td>
+        </tr>
+      `;
+      return;
     }
 
-    state.rows = rows;
+    const currentRole = AuthGuard.getRole();
+    const currentEmail = AuthGuard.getUserEmail();
 
-    const intro = {
-        customers: 'Organiza tus relaciones comerciales.',
-        products: 'Tu catálogo, precios y existencias al día.',
-        sales: 'Cada operación, con su detalle e historial.',
-        users: 'Cuentas, estados y accesos de tu equipo.',
-        roles: 'Un rol por usuario. Capacidades compartidas por equipo.',
-        permissions: 'El catálogo de capacidades de tu aplicación.'
+    tbody.innerHTML = filtered.map(t => {
+      const id = t.id;
+      const title = escapeHtml(t.title);
+      const cat = t.category || 'OTROS';
+      const prio = t.priority || 'MEDIA';
+      const status = t.status || 'ABIERTA';
+      const solicitante = t.solicitante ? escapeHtml(t.solicitante.name || t.solicitante.email) : '—';
+      const tecnico = t.tecnico ? escapeHtml(t.tecnico.name || t.tecnico.email) : '<span style="color: #94A3B8; font-style: italic;">Sin asignar</span>';
+      const fecha = formatDate(t.createdAt);
+
+      // Acciones rápidas según rol y estado estricto
+      let shortcutBtn = '';
+
+      // F1: Solicitante puede editar si está ABIERTA y sin técnico asignado
+      const isRequester = t.solicitante && t.solicitante.email === currentEmail;
+      if (isRequester && status === 'ABIERTA' && !t.tecnico) {
+        shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; border-color: #3B82F6; color: #1D4ED8;" onclick="window.CampusDesk.openEditModal(${id})">Editar</button>`;
+      } else if (currentRole === 'ADMIN' && (status === 'ABIERTA' || status === 'ASIGNADA')) {
+        shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px;" onclick="window.CampusDesk.openAssignQuick(${id})">Asignar</button>`;
+      } else if (currentRole === 'TECHNICIAN' && status === 'ASIGNADA' && t.tecnico && t.tecnico.email === currentEmail) {
+        shortcutBtn = `<button class="btn-campus-primary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'EN_PROCESO', 'Iniciando atención')">Atender</button>`;
+      } else if (currentRole === 'TECHNICIAN' && status === 'EN_PROCESO' && t.tecnico && t.tecnico.email === currentEmail) {
+        shortcutBtn = `<button class="btn-campus-primary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; background: #059669;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'RESUELTA', 'Incidencia resuelta')">Resolver</button>`;
+      } else if (status === 'RESUELTA' && isRequester) {
+        // E2: Solo el solicitante puede cerrar la incidencia
+        shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; border-color: #065F46; color: #065F46;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'CERRADA', 'Cierre confirmado')">Cerrar</button>`;
+      }
+
+      return `
+        <tr>
+          <td style="font-weight: 700; color: #475569;">#${id}</td>
+          <td>
+            <div style="font-weight: 600; color: #0F172A;">${title}</div>
+          </td>
+          <td><span class="badge badge-cat">${cat}</span></td>
+          <td><span class="badge badge-prio-${prio}">${prio}</span></td>
+          <td><span class="badge badge-status-${status}">${status.replace('_', ' ')}</span></td>
+          <td style="font-size: 13px;">${solicitante}</td>
+          <td style="font-size: 13px;">${tecnico}</td>
+          <td style="font-size: 12.5px; color: #64748B;">${fecha}</td>
+          <td style="text-align: right; white-space: nowrap;">
+            ${shortcutBtn}
+            <button class="btn-campus-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="window.CampusDesk.openDetailModal(${id})">
+              Ver Detalle
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // 8. Crear / Editar Incidencia (RF-03, F1)
+  function openCreateModal() {
+    const form = document.getElementById('formCreateTicket');
+    if (form) form.reset();
+
+    const editIdInput = document.getElementById('editTicketId');
+    if (editIdInput) editIdInput.value = '';
+
+    const modalTitle = document.getElementById('modalCreateTicketTitle');
+    if (modalTitle) modalTitle.textContent = 'Crear Nueva Incidencia';
+
+    const statusInput = document.getElementById('newStatus');
+    if (statusInput) statusInput.value = 'ABIERTA';
+
+    const submitBtn = document.getElementById('btnSubmitCreate');
+    if (submitBtn) submitBtn.textContent = 'Guardar Incidencia';
+
+    openModal('modalCreateTicket');
+  }
+
+  async function openEditModal(ticketId) {
+    let ticket = AppState.tickets.find(t => t.id === ticketId);
+    if (!ticket || !ticket.description) {
+      try {
+        const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}`);
+        if (resp && resp.ok) {
+          ticket = await resp.json();
+        }
+      } catch (e) {
+        console.error('Error al obtener datos para edición:', e);
+      }
+    }
+
+    if (!ticket) {
+      showToast('No se pudo cargar la incidencia para edición', 'error');
+      return;
+    }
+
+    const editIdInput = document.getElementById('editTicketId');
+    if (editIdInput) editIdInput.value = ticket.id;
+
+    const modalTitle = document.getElementById('modalCreateTicketTitle');
+    if (modalTitle) modalTitle.textContent = `Editar Incidencia #${ticket.id}`;
+
+    const submitBtn = document.getElementById('btnSubmitCreate');
+    if (submitBtn) submitBtn.textContent = 'Actualizar Incidencia';
+
+    const titleInput = document.getElementById('newTitle');
+    const catInput = document.getElementById('newCategory');
+    const prioInput = document.getElementById('newPriority');
+    const statusInput = document.getElementById('newStatus');
+    const descInput = document.getElementById('newDescription');
+
+    if (titleInput) titleInput.value = ticket.title || '';
+    if (catInput) catInput.value = ticket.category || 'REDES';
+    if (prioInput) prioInput.value = ticket.priority || 'MEDIA';
+    if (statusInput) statusInput.value = ticket.status || 'ABIERTA';
+    if (descInput) descInput.value = ticket.description || '';
+
+    closeModal('modalDetailTicket');
+    openModal('modalCreateTicket');
+  }
+
+  async function handleCreateOrUpdateTicket(e) {
+    e.preventDefault();
+    const editIdInput = document.getElementById('editTicketId');
+    const editId = editIdInput ? editIdInput.value : '';
+    const isEditing = Boolean(editId);
+
+    const btnSubmit = document.getElementById('btnSubmitCreate');
+    if (btnSubmit) {
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = isEditing ? 'Actualizando...' : 'Guardando...';
+    }
+
+    const payload = {
+      title: document.getElementById('newTitle').value.trim(),
+      category: document.getElementById('newCategory').value,
+      priority: document.getElementById('newPriority').value,
+      status: (document.getElementById('newStatus') && document.getElementById('newStatus').value) || 'ABIERTA',
+      description: document.getElementById('newDescription').value.trim()
     };
 
-    $('#content').innerHTML = heading(conf.title, intro[view], actions) + (
-        !read
-            ? '<div class="panel empty">Puedes realizar las acciones habilitadas arriba. Tu cuenta no tiene permiso para consultar este listado.</div>'
-            : table(view, rows)
-    );
-}
+    try {
+      const url = isEditing ? `${BASE_URL}/api/tickets/${editId}` : `${BASE_URL}/api/tickets`;
+      const method = isEditing ? 'PUT' : 'POST';
 
-function table(view, rows) {
-    let headers;
-    let cells;
-    const action = (name, label, i, cls = 'link-button') => button(name, label, `data-index="${i}"`, cls);
+      const resp = await apiFetch(url, {
+        method: method,
+        body: JSON.stringify(payload)
+      });
+      if (!resp) return;
 
-    if (view === 'customers') {
-        headers = ['Cliente', 'Contacto', 'Estado', 'Acciones'];
-        cells = (r, i) => [
-            `<span class="cell-title">${esc(r.name)}</span><small class="cell-sub">Cliente #${r.id}</small>`,
-            `${esc(r.email)}<small class="cell-sub">${esc(r.phone || 'Sin teléfono')}</small>`,
-            badge(r.active),
-            (r.active && can('CUSTOMER_UPDATE') ? action('edit', 'Editar', i) : '') +
-            (r.active && can('CUSTOMER_DELETE') ? action('deactivate', 'Desactivar', i) : '')
-        ];
-    }
-    if (view === 'products') {
-        headers = ['Producto', 'Precio', 'Existencias', 'Estado', 'Acciones'];
-        cells = (r, i) => [
-            `<span class="cell-title">${esc(r.name)}</span><small class="cell-sub">${esc(r.sku)}</small>`,
-            money(r.price),
-            r.stock,
-            badge(r.active),
-            (r.active && can('PRODUCT_UPDATE') ? action('edit', 'Editar', i) : '') +
-            (r.active && can('PRODUCT_DELETE') ? action('deactivate', 'Desactivar', i) : '')
-        ];
-    }
-    if (view === 'sales') {
-        headers = ['Venta', 'Cliente', 'Fecha', 'Total', 'Estado', 'Acciones'];
-        cells = (r, i) => [
-            `<span class="cell-title">#${r.id}</span><small class="cell-sub">${esc(r.createdBy)}</small>`,
-            esc(r.customerName),
-            date(r.createdAt),
-            money(r.total),
-            `<span class="badge ${r.cancelled ? 'off' : ''}">${r.cancelled ? 'Anulada' : 'Registrada'}</span>`,
-            action('sale-detail', 'Ver detalle', i) +
-            (!r.cancelled && can('SALE_CANCEL') ? action('cancel-sale', 'Anular', i) : '')
-        ];
-    }
-    if (view === 'users') {
-        headers = ['Usuario', 'Rol', 'Estado', 'Acciones'];
-        cells = (r, i) => [
-            `<span class="cell-title">${esc(r.username)}</span><small class="cell-sub">${esc(r.email)}</small>`,
-            `<span class="badge">${esc(r.role || 'Sin rol')}</span>`,
-            `<span class="badge ${r.locked || r.disabled ? 'off' : ''}">${r.disabled ? 'Deshabilitado' : r.locked ? 'Bloqueado' : 'Habilitado'}</span>`,
-            (can('USER_UPDATE') ? action('edit', 'Editar', i) : '') +
-            action('user-detail', 'Permisos', i) +
-            (can('ROLE_ASSIGN') ? action('user-role', 'Rol', i) : '') +
-            (can('PERMISSION_ASSIGN') ? action('user-permission', '＋ Permiso', i) : '') +
-            (can('USER_DELETE') ? action('delete-user', 'Eliminar', i) : '')
-        ];
-    }
-    if (view === 'roles') {
-        headers = ['Rol', 'Permisos heredados', 'Acciones'];
-        cells = (r, i) => [
-            `<span class="cell-title">${esc(r.name)}</span>`,
-            chips(r.permissions),
-            can('PERMISSION_MANAGE') ? action('role-permission', 'Gestionar permisos', i) : '—'
-        ];
-    }
-    if (view === 'permissions') {
-        headers = ['Permiso', 'Tipo'];
-        cells = r => [
-            `<span class="cell-title">${esc(r.name)}</span>`,
-            'Capacidad disponible para roles y usuarios'
-        ];
-    }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        const msg = (err && (err.message || err.error)) || (isEditing ? 'Error al actualizar la incidencia' : 'Error al crear la incidencia');
+        showToast(msg, 'error');
+        return;
+      }
 
-    const paging = ['customers', 'products', 'sales'].includes(view);
+      const savedTicket = await resp.json();
+      showToast(isEditing ? `Incidencia #${savedTicket.id} actualizada correctamente` : `Incidencia #${savedTicket.id} creada exitosamente`, 'success');
 
-    return `
-        <section class="panel">
-            <div class="panel-title">
-                <h3>${esc(sections[view].title)} <span class="muted">· ${paging ? state.total : rows.length}</span></h3>
-                <div class="toolbar">
-                    <input id="filter" aria-label="Buscar en los resultados visibles" placeholder="Buscar en esta página…">
-                </div>
+      closeModal('modalCreateTicket');
+      const form = document.getElementById('formCreateTicket');
+      if (form) form.reset();
+      if (editIdInput) editIdInput.value = '';
+
+      // Recargar tablero
+      await loadDashboardMetrics();
+      await loadTickets();
+
+      // Si se estaba visualizando el detalle, actualizarlo
+      if (isEditing && AppState.activeTicket && AppState.activeTicket.id === savedTicket.id) {
+        await openDetailModal(savedTicket.id);
+      }
+    } catch (err) {
+      showToast('Error de comunicación con el servidor', 'error');
+      console.error(err);
+    } finally {
+      if (btnSubmit) {
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = isEditing ? 'Actualizar Incidencia' : 'Guardar Incidencia';
+      }
+    }
+  }
+
+  // 9. Abrir Detalle Integral del Ticket (RF-04, RF-05, RF-06)
+  async function openDetailModal(ticketId) {
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}`);
+      if (!resp) return;
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        const msg = (err && (err.message || err.error)) || 'No se pudo cargar el detalle del ticket';
+        showToast(msg, 'error');
+        return;
+      }
+
+      const ticket = await resp.json();
+      AppState.activeTicket = ticket;
+
+      // Renderizar datos básicos
+      document.getElementById('detailTicketId').textContent = `#${ticket.id}`;
+      document.getElementById('detailTicketTitle').textContent = ticket.title;
+      document.getElementById('detailDescription').textContent = ticket.description;
+
+      const statusBadge = `<span class="badge badge-status-${ticket.status}">${ticket.status.replace('_', ' ')}</span>`;
+      const prioBadge = `<span class="badge badge-prio-${ticket.priority}">${ticket.priority}</span>`;
+      document.getElementById('detailStatusBadge').innerHTML = statusBadge;
+      document.getElementById('detailPriorityBadge').innerHTML = prioBadge;
+
+      const solicitante = ticket.solicitante
+        ? `${escapeHtml(ticket.solicitante.name)} (${escapeHtml(ticket.solicitante.email)})`
+        : '—';
+      const tecnico = ticket.tecnico
+        ? `${escapeHtml(ticket.tecnico.name)} (${escapeHtml(ticket.tecnico.email)})`
+        : '<span style="color: #94A3B8; font-style: italic;">Sin asignar</span>';
+
+      document.getElementById('detailSolicitante').innerHTML = solicitante;
+      document.getElementById('detailTecnico').innerHTML = tecnico;
+
+      // Renderizar Panel de Acciones de Flujo de Estados
+      renderActionPanel(ticket);
+
+      // Cargar Comentarios e Historial
+      await loadComments(ticket.id);
+      await loadHistory(ticket.id);
+
+      // Activar la primera pestaña por defecto
+      switchTab('tab-info');
+
+      // Abrir modal
+      openModal('modalDetailTicket');
+    } catch (e) {
+      showToast('Error de comunicación con el servidor', 'error');
+      console.error(e);
+    }
+  }
+
+  function renderActionPanel(ticket) {
+    const container = document.getElementById('dynamicActionPanel');
+    const role = AuthGuard.getRole();
+    const userEmail = AuthGuard.getUserEmail();
+
+    // 1. Si el ticket está CERRADO: Inmutabilidad
+    if (ticket.status === 'CERRADA') {
+      container.innerHTML = `
+        <div class="closed-box">
+          <span style="font-size: 18px;">🔒</span>
+          <div>
+            <div>Esta incidencia está <strong>CERRADA</strong>.</div>
+            <div style="font-size: 12px; font-weight: normal; color: #64748B; margin-top: 2px;">
+              El ciclo de vida ha concluido satisfactoriamente. Los datos e historial son inmutables.
             </div>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>
-                    </thead>
-                    <tbody>
-                        ${rows.map((r, i) => `
-                            <tr>
-                                ${cells(r, i).map((v, k) => `
-                                    <td ${k === headers.length - 1 ? 'class="actions"' : ''}>${v}</td>
-                                `).join('')}
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                <div id="empty-table" class="empty" ${rows.length ? 'hidden' : ''}>
-                    Aún no hay registros. Empieza con una nueva creación.
-                </div>
-            </div>
-            ${paging ? `
-                <div class="pagination">
-                    <span>Página ${state.page + 1} de ${Math.max(state.pages, 1)} ·${state.total} registros</span>
-                    <div>
-                        <button data-action="previous" ${state.page === 0 ? 'disabled' : ''}>← Anterior</button>
-                        <button data-action="next" ${state.page + 1 >= state.pages ? 'disabled' : ''}>Siguiente →</button>
-                    </div>
-                </div>
-            ` : ''}
-        </section>
-    `;
-}
-
-async function dashboard() {
-    const first = state.me.username;
-    const metrics = await Promise.all(['customers', 'products', 'sales'].map(async key => ({
-        key,
-        total: can(sections[key].prefix + '_READ')
-            ? (await api(sections[key].endpoint + '?size=1')).totalElements
-            : null
-    })));
-
-    const links = Object.entries(sections).filter(([key]) => key !== 'home' && visible(key));
-
-    $('#content').innerHTML = heading(
-        `Hola, ${first}.`,
-        'Tu operación, de un vistazo.',
-        `<span class="date-label">${esc(new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }))}</span>`
-    ) + `
-        <div class="hero">
-            <div>
-                <span class="eyebrow">UN ESPACIO PARA TU EQUIPO</span>
-                <h2>La gestión empieza con una buena conexión.</h2>
-                <p>Consulta tus módulos, registra una operación o administra los accesos. Todo desde tu espacio de trabajo.</p>
-            </div>
-            <span class="hero-mark">◈</span>
+          </div>
         </div>
-        <div class="cards">
-            ${metrics.map(({ key, total }) => `
-                <div class="card">
-                    <span class="card-icon">${sections[key].icon}</span>
-                    <div>
-                        <h3>${sections[key].title}</h3>
-                        <p>${total === null ? 'Sin acceso al listado' : 'Registros en tu espacio'}</p>
-                    </div>
-                    <div class="metric">${total ?? '—'}</div>
-                    ${visible(key) ? button('go', 'Abrir módulo →', `data-view="${key}"`, 'link-button') : ''}
-                </div>
-            `).join('')}
-        </div>
-        <section class="panel">
-            <div class="panel-title">
-                <h3>Accesos rápidos</h3>
-                <span class="badge">${esc(state.me.role)}</span>
-            </div>
-            <div class="quick-links">
-                ${links.map(([key, v]) => `
-                    <button class="quick-link" data-action="go" data-view="${key}">
-                        <span>${v.icon} &nbsp; ${v.title}<small>Ir a${v.title.toLowerCase()}</small></span>
-                        <span>→</span>
-                    </button>
-                `).join('') || '<div class="empty">Tu cuenta todavía no tiene permisos para estos módulos.</div>'}
-            </div>
-        </section>
-    `;
-}
-
-let modalSubmit = null;
-
-function modal(title, body, onSubmit, label = 'Guardar') {
-    const f = $('#modal-form');
-    f.reset();
-    $('#modal-title').textContent = title;
-    $('#modal-body').innerHTML = body;
-    $('#modal-error').textContent = '';
-    $('#modal-save').textContent = label;
-    $('#modal-save').hidden = !onSubmit;
-    $('#modal-cancel').textContent = onSubmit ? 'Cancelar' : 'Cerrar';
-    modalSubmit = onSubmit;
-    if (!$('#modal').open) $('#modal').showModal();
-}
-
-$('#modal-close').onclick = $('#modal-cancel').onclick = () => $('#modal').close();
-
-$('#modal').addEventListener('click', e => {
-    if (e.target === $('#modal')) {
-        const rect = e.target.getBoundingClientRect();
-        if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-            e.target.close();
-        }
+      `;
+      return;
     }
-});
 
-$('#modal-form').onsubmit = async e => {
-    e.preventDefault();
-    if (!modalSubmit) return;
+    let actionsHtml = '';
 
-    const submit = modalSubmit;
-    const b = $('#modal-save');
-    b.disabled = true;
-    $('#modal-error').textContent = '';
+    // Selector universal de cambio de estado desde vista de detalle (RF-04)
+    actionsHtml += `
+      <div class="action-box" style="background: #F8FAFC; border-color: #CBD5E1; margin-bottom: 14px;">
+        <div class="action-box-title" style="color: #1E293B; display: flex; align-items: center; justify-content: space-between;">
+          <span>🔄 Cambiar Estado de la Incidencia</span>
+          <span style="font-size: 11.5px; font-weight: normal; color: #64748B;">Estado actual: <strong>${ticket.status.replace('_', ' ')}</strong></span>
+        </div>
+        <p style="font-size: 12.5px; color: #64748B; margin-bottom: 10px;">
+          Seleccione el estado deseado. El cambio se procesará validando las reglas de negocio y permisos de su rol.
+        </p>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <select id="selectDetailNewStatus" style="flex: 1; min-width: 170px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13.5px; background: white;">
+            <option value="ABIERTA" ${ticket.status === 'ABIERTA' ? 'selected' : ''}>Abierta</option>
+            <option value="ASIGNADA" ${ticket.status === 'ASIGNADA' ? 'selected' : ''}>Asignada</option>
+            <option value="EN_PROCESO" ${ticket.status === 'EN_PROCESO' ? 'selected' : ''}>En Proceso</option>
+            <option value="RESUELTA" ${ticket.status === 'RESUELTA' ? 'selected' : ''}>Resuelta</option>
+            <option value="CERRADA" ${ticket.status === 'CERRADA' ? 'selected' : ''}>Cerrada</option>
+          </select>
+          <input type="text" id="detailStatusComment" placeholder="Comentario o justificación del cambio..." style="flex: 2; min-width: 200px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px;">
+          <button class="btn-campus-primary" style="padding: 9px 16px; font-size: 13.5px;" onclick="window.CampusDesk.changeStatusFromDetail(${ticket.id})">
+            Actualizar Estado
+          </button>
+        </div>
+      </div>
+    `;
+
+    // F1: Opción de Editar si el usuario es el solicitante o administrador
+    const isRequester = ticket.solicitante && ticket.solicitante.email === userEmail;
+    if ((isRequester && ticket.status === 'ABIERTA' && !ticket.tecnico) || role === 'ADMIN') {
+      actionsHtml += `
+        <div class="action-box" style="background: #F0FDF4; border-color: #BBF7D0; margin-bottom: 14px;">
+          <div class="action-box-title" style="color: #166534;">✏ Edición de Incidencia (F1)</div>
+          <p style="font-size: 13px; color: #15803D; margin-bottom: 12px;">
+            ${role === 'ADMIN' ? 'Como administrador, puedes modificar todos los datos de esta incidencia.' : 'La incidencia está abierta y aún no ha sido asignada a ningún técnico de soporte. Puedes modificar el título, categoría, prioridad, estado o descripción.'}
+          </p>
+          <button class="btn-campus-secondary" style="background: white; border-color: #16A34A; color: #15803D; font-weight: 600;" onclick="window.CampusDesk.openEditModal(${ticket.id})">
+            ✏ Editar Datos de la Incidencia
+          </button>
+        </div>
+      `;
+    }
+
+    // 2. Acciones para ADMINISTRADOR (Asignar o reasignar técnicos, solo en ABIERTA o ASIGNADA)
+    if (role === 'ADMIN' && (ticket.status === 'ABIERTA' || ticket.status === 'ASIGNADA')) {
+      const techOptions = AppState.technicians.map(t => {
+        const isSelected = ticket.tecnico && ticket.tecnico.id === t.id ? 'selected' : '';
+        return `<option value="${t.id}" ${isSelected}>${escapeHtml(t.name)} (${escapeHtml(t.email)})</option>`;
+      }).join('');
+
+      const actionTitle = ticket.status === 'ASIGNADA' ? 'Reasignación de Técnico' : 'Asignación de Técnico Responsable';
+      const actionBtnText = ticket.status === 'ASIGNADA' ? 'Reasignar Técnico' : 'Asignar Técnico';
+
+      actionsHtml += `
+        <div class="action-box">
+          <div class="action-box-title">⚙ Administración: ${actionTitle}</div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <select id="selectAssignTech" style="flex: 1; min-width: 200px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px;">
+              <option value="">-- Seleccionar Técnico --</option>
+              ${techOptions}
+            </select>
+            <button class="btn-campus-primary" style="padding: 9px 16px; font-size: 13.5px;" onclick="window.CampusDesk.assignTechnician(${ticket.id})">
+              ${actionBtnText}
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // 3. Acciones para TÉCNICO ASIGNADO (Iniciar atención o Resolver)
+    // E2: Exclusivo para el técnico asignado (el administrador no debe saltarse las reglas de atención técnica)
+    const isAssignedTech = ticket.tecnico && ticket.tecnico.email === userEmail;
+    if (isAssignedTech) {
+      if (ticket.status === 'ASIGNADA') {
+        actionsHtml += `
+          <div class="action-box" style="background: #EFF6FF; border-color: #BFDBFE;">
+            <div class="action-box-title" style="color: #1E40AF;">▶ Gestión Técnica: Iniciar Atención</div>
+            <p style="font-size: 13px; color: #3B82F6; margin-bottom: 12px;">
+              La incidencia se encuentra asignada a tu perfil. Presiona el botón para iniciar el diagnóstico técnico.
+            </p>
+            <button class="btn-campus-primary" style="background: #2563EB;" onclick="window.CampusDesk.updateStatus(${ticket.id}, 'EN_PROCESO', 'Técnico inicia atención e investigación')">
+              Iniciar Atención (Pasar a EN PROCESO)
+            </button>
+          </div>
+        `;
+      } else if (ticket.status === 'EN_PROCESO') {
+        actionsHtml += `
+          <div class="action-box" style="background: #ECFDF5; border-color: #A7F3D0;">
+            <div class="action-box-title" style="color: #065F46;">✓ Gestión Técnica: Concluir y Resolver</div>
+            <p style="font-size: 13px; color: #047857; margin-bottom: 12px;">
+              Indica la solución aplicada para que el usuario solicitante pueda validar y confirmar el cierre.
+            </p>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <input type="text" id="resolveCommentInput" placeholder="Detalle de solución técnica aplicada..." style="flex: 1; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px;">
+              <button class="btn-campus-primary" style="background: #10B981;" onclick="window.CampusDesk.resolveTicket(${ticket.id})">
+                Marcar como RESUELTA
+              </button>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    // 4. Acciones para USUARIO SOLICITANTE (Cerrar ticket resuelto)
+    // E2: Exclusivo para el solicitante
+    if (isRequester) {
+      if (ticket.status === 'RESUELTA') {
+        actionsHtml += `
+          <div class="action-box" style="background: #F8FAFC; border-color: #CBD5E1;">
+            <div class="action-box-title" style="color: #334155;">🔒 Conformidad y Cierre de Incidencia</div>
+            <p style="font-size: 13px; color: #64748B; margin-bottom: 12px;">
+              El soporte técnico ha marcado el problema como RESUELTO. Si estás conforme con la solución brindada, confirma el cierre definitivo.
+            </p>
+            <button class="btn-campus-primary" style="background: #334155;" onclick="window.CampusDesk.updateStatus(${ticket.id}, 'CERRADA', 'Solicitante confirma conformidad y cierre definitivo')">
+              Confirmar Conformidad y Cerrar Incidencia
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    container.innerHTML = actionsHtml || `
+      <div style="padding: 12px; background: #F8FAFC; border-radius: 6px; font-size: 13px; color: #64748B; text-align: center;">
+        No hay transiciones manuales pendientes para tu perfil en el estado actual (${ticket.status.replace('_', ' ')}).
+      </div>
+    `;
+  }
+
+  // 10. Asignar Técnico (RF-04)
+  async function assignTechnician(ticketId) {
+    const select = document.getElementById('selectAssignTech');
+    if (!select || !select.value) {
+      showToast('Por favor selecciona un técnico de la lista', 'error');
+      return;
+    }
+
+    const tecnicoId = parseInt(select.value, 10);
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/assign`, {
+        method: 'PATCH',
+        body: JSON.stringify({ tecnicoId })
+      });
+      if (!resp) return;
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        showToast((err && (err.message || err.error)) || 'Error al asignar técnico', 'error');
+        return;
+      }
+
+      showToast('Técnico asignado exitosamente', 'success');
+      await openDetailModal(ticketId);
+      await loadDashboardMetrics();
+      await loadTickets();
+    } catch (e) {
+      showToast('Error de red al asignar técnico', 'error');
+      console.error(e);
+    }
+  }
+
+  // 11. Cambiar Estado en la Máquina de Estados (RF-04)
+  async function updateStatus(ticketId, newStatus, defaultComment = '') {
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: newStatus,
+          comentario: defaultComment
+        })
+      });
+      if (!resp) return;
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        const msg = (err && (err.message || err.error)) || 'Transición de estado no autorizada';
+        showToast(msg, 'error');
+        return;
+      }
+
+      showToast(`Estado actualizado a ${newStatus.replace('_', ' ')}`, 'success');
+      await openDetailModal(ticketId);
+      await loadDashboardMetrics();
+      await loadTickets();
+    } catch (e) {
+      showToast('Error de comunicación al actualizar estado', 'error');
+      console.error(e);
+    }
+  }
+
+  function resolveTicket(ticketId) {
+    const input = document.getElementById('resolveCommentInput');
+    const comment = (input && input.value.trim()) || 'Solución técnica verificada';
+    updateStatus(ticketId, 'RESUELTA', comment);
+  }
+
+  async function changeStatusFromDetail(ticketId) {
+    const select = document.getElementById('selectDetailNewStatus');
+    const commentInput = document.getElementById('detailStatusComment');
+    if (!select || !select.value) {
+      showToast('Por favor selecciona un estado de la lista', 'error');
+      return;
+    }
+
+    const newStatus = select.value;
+    if (AppState.activeTicket && AppState.activeTicket.status === newStatus) {
+      showToast(`La incidencia ya se encuentra en estado ${newStatus.replace('_', ' ')}`, 'info');
+      return;
+    }
+
+    const comment = (commentInput && commentInput.value.trim()) || `Cambio de estado a ${newStatus.replace('_', ' ')}`;
+    await updateStatus(ticketId, newStatus, comment);
+  }
+
+  // 12. Hilo de Comentarios (RF-05)
+  async function loadComments(ticketId) {
+    const container = document.getElementById('commentsContainer');
+    const countBadge = document.getElementById('detailCommentCount');
+    const formContainer = document.getElementById('commentFormContainer');
+
+    if (!container) return;
+    container.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando notas...</div>';
 
     try {
-        await submit(new FormData(e.currentTarget));
-        $('#modal').close();
-        state.cache = {};
-        await refreshMe();
-        await navigate(state.view, state.page);
-        toast('Cambios guardados correctamente.');
-    } catch (error) {
-        $('#modal-error').textContent = error.message;
-    } finally {
-        b.disabled = false;
-    }
-};
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/comments`);
+      if (!resp) return;
 
-const field = (label, name, value = '', type = 'text', extra = '') => `
-    <label>
-        ${label}
-        <input name="${name}" type="${type}" value="${esc(value)}" ${extra}>
-    </label>
-`;
+      if (!resp.ok) {
+        container.innerHTML = '<div style="color: #64748B; font-size: 13px;">Sin comentarios registrados.</div>';
+        return;
+      }
 
-function check(label, name, checked) {
-    return `
-        <label class="check-label">
-            <input type="checkbox" name="${name}" ${checked ? 'checked' : ''}>
-            ${label}
-        </label>
-    `;
-}
+      const comments = await resp.json();
+      if (countBadge) countBadge.textContent = comments.length;
 
-async function options(url) {
-    return await api(url);
-}
+      // Si ticket está CERRADO, deshabilitar formulario de comentarios
+      if (formContainer) {
+        if (AppState.activeTicket && AppState.activeTicket.status === 'CERRADA') {
+          formContainer.innerHTML = `
+            <div class="closed-box" style="margin-top: 14px;">
+              <span>🔒</span> No se pueden registrar comentarios adicionales en un ticket CERRADO.
+            </div>
+          `;
+        } else {
+          formContainer.innerHTML = `
+            <form id="formAddComment" style="margin-top: 14px;" onsubmit="window.CampusDesk.handleAddComment(event, ${ticketId})">
+              <textarea id="commentContent" rows="3" required placeholder="Escriba una nota o actualización técnica sobre esta incidencia..." style="width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 6px; resize: vertical;"></textarea>
+              <div style="text-align: right; margin-top: 8px;">
+                <button type="submit" class="btn-campus-primary" style="padding: 8px 16px; font-size: 13.5px;" id="btnSubmitComment">
+                  Agregar Comentario
+                </button>
+              </div>
+            </form>
+          `;
+        }
+      }
 
-async function picker(name, label, kind, current = '') {
-    let values = [];
-    if (kind === 'role' && can('ROLE_MANAGE')) {
-        values = (await options('/api/roles')).map(r => r.name);
-    }
-    if (kind === 'permission' && can('PERMISSION_MANAGE')) {
-        values = await options('/api/permissions');
-    } else if (kind === 'permission' && can('PERMISSION_ASSIGN')) {
-        values = await options('/api/user/permissions');
-    }
+      if (comments.length === 0) {
+        container.innerHTML = '<div style="color: #64748B; font-size: 13px; text-align: center; padding: 20px;">No hay comentarios aún. Escribe el primero abajo.</div>';
+        return;
+      }
 
-    if (values.length) {
+      container.innerHTML = comments.map(c => {
+        const authorName = c.author ? escapeHtml(c.author.name || c.author.email) : 'Usuario';
+        const authorRole = c.author ? c.author.role : 'USER';
+        const dateStr = formatDate(c.createdAt);
+        const bodyStr = escapeHtml(c.content);
+
         return `
-            <label>
-                ${label}
-                <select name="${name}" required>
-                    ${values.map(v => `<option ${v === current ? 'selected' : ''} value="${esc(v)}">${esc(v)}</option>`).join('')}
-                </select>
-            </label>
+          <div class="comment-card">
+            <div class="comment-header">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="comment-author">${authorName}</span>
+                <span class="role-pill ${authorRole.toLowerCase()}" style="font-size: 10px; padding: 2px 6px;">${authorRole}</span>
+              </div>
+              <span style="color: #94A3B8;">${dateStr}</span>
+            </div>
+            <div class="comment-body">${bodyStr}</div>
+          </div>
         `;
+      }).join('');
+    } catch (e) {
+      console.error(e);
+      container.innerHTML = '<div style="color: #E11D48; font-size: 13px;">Error al cargar comentarios.</div>';
     }
+  }
 
-    return field(label, name, current || (kind === 'role' ? 'CUSTOMER' : ''), 'text', 'required maxlength="50"');
-}
+  async function handleAddComment(e, ticketId) {
+    e.preventDefault();
+    const btn = document.getElementById('btnSubmitComment');
+    const textarea = document.getElementById('commentContent');
+    const content = textarea.value.trim();
 
-async function entityForm(row, askId = false) {
-    const view = state.view;
-    const edit = !!row;
-    row = row || {};
-    let body = '';
+    if (!content) return;
 
-    if (view === 'customers') {
-        body = field('Nombre', 'name', row.name, 'text', 'required maxlength="150"') + `
-            <div class="fields">
-                ${field('Correo', 'email', row.email, 'email', 'required maxlength="200"')}
-                ${field('Teléfono', 'phone', row.phone, 'tel', 'maxlength="30"')}
-            </div>
-        `;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Enviando...';
     }
-
-    if (view === 'products') {
-        body = field('Nombre', 'name', row.name, 'text', 'required maxlength="150"') +
-            field('Código SKU', 'sku', row.sku, 'text', 'required maxlength="50"') + `
-            <div class="fields">
-                ${field('Precio', 'price', row.price ?? '', 'number', 'required min="0.01" step="0.01"')}
-                ${field('Existencias', 'stock', row.stock ?? 0, 'number', 'required min="0" max="2147483647" step="1"')}
-            </div>
-        `;
-    }
-
-    if (view === 'users') {
-        body = field('Usuario', 'username', row.username, 'text', `required maxlength="50" ${edit ? 'readonly' : ''}`) +
-            field('Correo', 'email', row.email, 'email', 'required maxlength="200"') +
-            field(edit ? 'Nueva contraseña (opcional)' : 'Contraseña', 'password', '', 'password', `${edit ? '' : 'required'} autocomplete="new-password"`) + `
-            <div class="fields">
-                ${check('Cuenta bloqueada', 'locked', row.locked)}
-                ${check('Cuenta deshabilitada', 'disabled', row.disabled)}
-            </div>
-        `;
-
-        if (!edit && can('ROLE_ASSIGN')) {
-            body += await picker('role', 'Rol de la cuenta', 'role');
-        }
-        body += '<p class="note">Los permisos adicionales se gestionan desde la acción «Dar permiso». Editar datos no cambia el rol.</p>';
-    }
-
-    if (view === 'roles') {
-        body = field('Nombre del rol', 'name', '', 'text', 'required maxlength="50" pattern="[A-Za-z][A-Za-z0-9_]{0,49}"');
-        if (can('PERMISSION_MANAGE')) {
-            body += `
-                <label>Permisos iniciales</label>
-                <div class="checks">
-                    ${(await api('/api/permissions')).map(v => `
-                        <label>
-                            <input type="checkbox" name="permissions" value="${esc(v)}">
-                            ${esc(v)}
-                        </label>
-                    `).join('')}
-                </div>
-            `;
-        }
-        body += '<p class="note">El rol puede comenzar sin permisos. Después podrás asignarlo a un usuario.</p>';
-    }
-
-    if (view === 'permissions') {
-        body = field('Nombre del permiso', 'name', '', 'text', 'required maxlength="50" pattern="[A-Za-z][A-Za-z0-9_]{0,49}"') +
-            '<p class="note">Crear un permiso lo registra en el catálogo. La operación correspondiente debe comprobarlo en el servidor.</p>';
-    }
-
-    if (askId) {
-        body = field('Identificador del registro', 'recordId', '', 'number', 'required min="1" step="1"') + body;
-    }
-
-    modal((edit ? 'Editar ' : 'Nuevo ') + ({
-        customers: 'cliente',
-        products: 'producto',
-        users: 'usuario',
-        roles: 'rol',
-        permissions: 'permiso'
-    }[view]), body, async f => {
-        let data = Object.fromEntries(f);
-        const recordId = askId ? data.recordId : row.id;
-        delete data.recordId;
-
-        if (view === 'products') {
-            data.price = Number(data.price);
-            data.stock = Number(data.stock);
-        }
-        if (view === 'users') {
-            data.locked = f.has('locked');
-            data.disabled = f.has('disabled');
-            if (edit && !data.password) delete data.password;
-        }
-        if (view === 'roles' && can('PERMISSION_MANAGE')) {
-            data.permissions = f.getAll('permissions');
-        }
-
-        const url = view === 'users'
-            ? (edit ? '/api/user/update' : '/api/user/add')
-            : view === 'roles'
-                ? '/api/roles'
-                : view === 'permissions'
-                    ? '/api/permissions'
-                    : sections[view].endpoint + (edit ? '/' + recordId : '');
-
-        await api(url, { method: edit ? 'PUT' : 'POST', body: data });
-    });
-}
-
-function confirmAction(title, message, run) {
-    modal(title, `<p>${esc(message)}</p>`, run, 'Confirmar');
-}
-
-async function userRole(row) {
-    modal(
-        'Asignar rol',
-        field('Usuario', 'username', row?.username || '', 'text', 'required') +
-        await picker('role', 'Rol único', 'role', row?.role) +
-        '<p class="note">Reemplaza el rol actual y conserva los permisos individuales.</p>',
-        f => api('/api/user/assignRole', { method: 'POST', body: Object.fromEntries(f) })
-    );
-}
-
-async function userPermission(row) {
-    modal(
-        'Dar permiso individual',
-        field('Usuario', 'username', row?.username || '', 'text', 'required') +
-        await picker('permission', 'Permiso adicional', 'permission') +
-        '<p class="note">Se suma a los permisos del rol sin cambiarlo.</p>',
-        f => api('/api/user/assignPermission', { method: 'POST', body: Object.fromEntries(f) })
-    );
-}
-
-async function userDetails(row) {
-    const d = await api(`/api/user/${path(row.username)}/permissions`);
-    modal(
-        'Permisos de ' + d.username,
-        `
-            <p class="note">Rol: <b>${esc(d.role)}</b></p>
-            <div class="permission-group">
-                <h3>Heredados del rol</h3>
-                ${chips(d.rolePermissions)}
-            </div>
-            <div class="permission-group">
-                <h3>Permisos individuales</h3>
-                ${(d.additionalPermissions || []).map(p => `
-                    <div class="info-row">
-                        <span>${esc(p)}</span>${can('PERMISSION_ASSIGN') ? button('revoke-user-permission', 'Retirar', `data-username="${esc(d.username)}" data-permission="${esc(p)}"`, 'link-button') : ''}
-                    </div>
-                `).join('') || '<small>No tiene permisos adicionales.</small>'}
-            </div>
-            <div class="permission-group">
-                <h3>Acceso efectivo</h3>
-                ${chips(d.effectivePermissions)}
-            </div>
-        `,
-        null
-    );
-}
-
-async function rolePermissions(row) {
-    const p = await picker('permission', 'Permiso', 'permission');
-    modal(
-        'Permisos de ' + row.name,
-        `
-            <p class="note">Estos permisos se aplican a todos los usuarios con el rol ${esc(row.name)}.</p>
-            ${p}
-            <label>
-                Operación
-                <select name="operation">
-                    <option value="PUT">Agregar al rol</option>
-                    <option value="DELETE">Retirar del rol</option>
-                </select>
-            </label>
-            <div class="permission-group">
-                <h3>Permisos actuales</h3>
-                ${chips(row.permissions)}
-            </div>
-        `,
-        f => api(`/api/roles/${path(row.name)}/permissions/${path(f.get('permission'))}`, { method: f.get('operation') })
-    );
-}
-
-async function allPages(endpoint) {
-    const out = [];
-    for (let page = 0; ; page++) {
-        const d = await api(`${endpoint}?page=${page}&size=100`);
-        out.push(...d.content);
-        if (page + 1 >= d.totalPages) break;
-        if (page >= 99) {
-            throw new Error('Hay demasiados registros para este selector. Usa los identificadores manualmente.');
-        }
-    }
-    return out;
-}
-
-async function saleForm() {
-    const customers = can('CUSTOMER_READ') ? (await allPages('/api/customers')).filter(r => r.active) : [];
-    const products = can('PRODUCT_READ') ? (await allPages('/api/products')).filter(r => r.active) : [];
-
-    const customer = customers.length
-        ? `
-            <label>
-                Cliente
-                <select name="customerId" required>
-                    <option value="">Selecciona un cliente</option>
-                    ${customers.map(c => `<option value="${c.id}">${esc(c.name)} · #${c.id}</option>`).join('')}
-                </select>
-            </label>
-        `
-        : field('Identificador del cliente', 'customerId', '', 'number', 'required min="1" step="1"');
-
-    modal(
-        'Nueva venta',
-        customer +
-        '<p class="note">El servidor calcula los precios y valida el inventario. Los importes mostrados son una estimación.</p>' +
-        '<label>Productos de la venta</label>' +
-        '<div id="sale-lines"></div>' +
-        button('add-line', '＋ Agregar producto', '', 'secondary') +
-        '<div class="totals"><span>Total estimado</span><b id="sale-total">—</b></div>',
-        async f => {
-            const items = [...$('#sale-lines').children].map(line => ({
-                productId: Number(line.querySelector('[name=productId]').value),
-                quantity: Number(line.querySelector('[name=quantity]').value)
-            }));
-
-            if (!items.length) throw new Error('Agrega al menos un producto.');
-            if (new Set(items.map(i => i.productId)).size !== items.length) {
-                throw new Error('No repitas productos: consolida su cantidad.');
-            }
-
-            await api('/api/sales', {
-                method: 'POST',
-                body: {
-                    customerId: Number(f.get('customerId')),
-                    items
-                }
-            });
-        },
-        'Registrar venta'
-    );
-
-    state.cache.saleProducts = products;
-    addSaleLine();
-}
-
-function addSaleLine() {
-    const ps = state.cache.saleProducts || [];
-    const line = document.createElement('div');
-    line.className = 'sale-line';
-
-    line.innerHTML = (
-        ps.length
-            ? `
-                <select name="productId" aria-label="Producto" required>
-                    <option value="">Selecciona un producto</option>
-                    ${ps.map(p => `<option value="${p.id}">${esc(p.name)} · ${money(p.price)} · stock ${p.stock}</option>`).join('')}
-                </select>
-            `
-            : '<input name="productId" aria-label="ID de producto" placeholder="ID de producto" type="number" required min="1" step="1">'
-    ) +
-    '<input name="quantity" aria-label="Cantidad" type="number" value="1" min="1" max="1000000" step="1" required>' +
-    button('remove-line', '×', '', 'icon-button');
-
-    $('#sale-lines').append(line);
-    saleEstimate();
-}
-
-function saleEstimate() {
-    if (!$('#sale-total')) return;
-    let total = 0;
-    let unknown = false;
-
-    for (const line of $('#sale-lines').children) {
-        const p = (state.cache.saleProducts || []).find(p => p.id === Number(line.querySelector('[name=productId]').value));
-        if (!p) {
-            unknown = true;
-            continue;
-        }
-        total += Math.round(Number(p.price) * 100) * Number(line.querySelector('[name=quantity]').value);
-    }
-
-    $('#sale-total').textContent = unknown ? 'Por calcular' : money(total/100);
-}
-
-async function saleDetails(row) {
-    const d = await api('/api/sales/' + row.id);
-    modal(
-        'Venta #' + d.id,
-        `
-            <div class="info-row"><span>Cliente</span><b>${esc(d.customerName)}</b></div>
-            <div class="info-row"><span>Registrada por</span><b>${esc(d.createdBy)}</b></div>
-            <div class="info-row"><span>Fecha</span><b>${esc(date(d.createdAt))}</b></div>
-            <div class="info-row"><span>Estado</span><b>${d.cancelled ? 'Anulada' : 'Registrada'}</b></div>
-            ${d.cancelled ? `<div class="info-row"><span>Anulación</span><b>${esc(d.cancelledBy)} ·${esc(date(d.cancelledAt))}</b></div>` : ''}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Producto</th>
-                            <th>Cantidad</th>
-                            <th>Precio</th>
-                            <th>Subtotal</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${d.items.map(i => `
-                            <tr>
-                                <td>${esc(i.productName)}</td>
-                                <td>${i.quantity}</td>
-                                <td>${money(i.unitPrice)}</td>
-                                <td>${money(i.subtotal)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-            <div class="totals">
-                <span>Total registrado</span><b>${money(d.total)}</b>
-            </div>
-        `,
-        null
-    );
-}
-
-async function handle(action, element) {
-    const row = state.rows[Number(element.dataset.index)];
-
-    switch (action) {
-        case 'go':
-            return navigate(element.dataset.view);
-
-        case 'reload':
-            await refreshMe();
-            return navigate(state.view, state.page);
-
-        case 'previous':
-            return navigate(state.view, state.page - 1);
-
-        case 'next':
-            return navigate(state.view, state.page + 1);
-
-        case 'create':
-            return state.view === 'sales' ? saleForm() : entityForm();
-
-        case 'edit':
-            return entityForm(row);
-
-        case 'edit-business-id':
-            return entityForm({}, true);
-
-        case 'deactivate-business-id':
-            modal(
-                'Desactivar registro',
-                field('Identificador', 'id', '', 'number', 'required min="1" step="1"') +
-                '<p class="note">El registro quedará inactivo. Se conservará el historial.</p>',
-                f => api(sections[state.view].endpoint + '/' + path(f.get('id')), { method: 'DELETE' }),
-                'Desactivar'
-            );
-            return;
-
-        case 'cancel-sale-id':
-            modal(
-                'Anular venta',
-                field('Identificador de venta', 'id', '', 'number', 'required min="1" step="1"') +
-                '<p class="note">Anular repone las existencias y conserva el detalle original.</p>',
-                f => api('/api/sales/' + path(f.get('id')) + '/cancel', { method: 'POST' }),
-                'Anular venta'
-            );
-            return;
-
-        case 'revoke-permission-id':
-            modal(
-                'Retirar permiso individual',
-                field('Usuario', 'username', '', 'text', 'required') +
-                await picker('permission', 'Permiso individual', 'permission') +
-                '<p class="note">Los permisos heredados del rol permanecerán activos.</p>',
-                f => api(`/api/user/${path(f.get('username'))}/permissions/${path(f.get('permission'))}`, { method: 'DELETE' }),
-                'Retirar permiso'
-            );
-            return;
-
-        case 'edit-named':
-            modal(
-                'Actualizar cuenta',
-                field('Usuario', 'username', '', 'text', 'required') +
-                field('Nuevo correo (opcional)', 'email', '', 'email') +
-                field('Nueva contraseña (opcional)', 'password', '', 'password') +
-                `
-                    <label>
-                        Estado
-                        <select name="status">
-                            <option value="">Conservar estado</option>
-                            <option value="enabled">Habilitar y desbloquear</option>
-                            <option value="disabled">Deshabilitar</option>
-                            <option value="locked">Bloquear</option>
-                        </select>
-                    </label>
-                `,
-                f => {
-                    const data = { username: f.get('username') };
-                    if (f.get('email')) data.email = f.get('email');
-                    if (f.get('password')) data.password = f.get('password');
-                    if (f.get('status') === 'enabled') {
-                        data.locked = false;
-                        data.disabled = false;
-                    }
-                    if (f.get('status') === 'disabled') data.disabled = true;
-                    if (f.get('status') === 'locked') data.locked = true;
-                    return api('/api/user/update', { method: 'PUT', body: data });
-                }
-            );
-            return;
-
-        case 'delete-named':
-            modal(
-                'Eliminar cuenta',
-                field('Usuario', 'username', '', 'text', 'required') +
-                '<p class="note">La cuenta se eliminará permanentemente.</p>',
-                f => api('/api/user/delete/' + path(f.get('username')), { method: 'DELETE' }),
-                'Eliminar'
-            );
-            return;
-
-        case 'deactivate':
-            return confirmAction(
-                'Desactivar registro',
-                `¿Desactivar ${row.name}? Las ventas históricas se conservarán.`,
-                () => api(sections[state.view].endpoint + '/' + row.id, { method: 'DELETE' })
-            );
-
-        case 'delete-user':
-            return confirmAction(
-                'Eliminar usuario',
-                `¿Eliminar permanentemente la cuenta ${row.username}?`,
-                () => api('/api/user/delete/' + path(row.username), { method: 'DELETE' })
-            );
-
-        case 'user-role':
-            return userRole(row);
-
-        case 'user-permission':
-            return userPermission(row);
-
-        case 'user-detail':
-            return userDetails(row);
-
-        case 'role-permission':
-            return rolePermissions(row);
-
-        case 'cancel-sale':
-            return confirmAction(
-                'Anular venta',
-                `¿Anular la venta #${row.id}? Sus existencias regresarán al inventario.`,
-                () => api('/api/sales/' + row.id + '/cancel', { method: 'POST' })
-            );
-
-        case 'sale-detail':
-            return saleDetails(row);
-
-        case 'add-line':
-            if ($('#sale-lines').children.length >= 100) {
-                throw new Error('Máximo 100 productos por venta.');
-            }
-            return addSaleLine();
-
-        case 'remove-line':
-            element.closest('.sale-line').remove();
-            return saleEstimate();
-
-        case 'revoke-user-permission':
-            return confirmAction(
-                'Retirar permiso individual',
-                `¿Retirar ${element.dataset.permission} de ${element.dataset.username}? Los permisos heredados se conservan.`,
-                () => api(`/api/user/${path(element.dataset.username)}/permissions/${path(element.dataset.permission)}`, { method: 'DELETE' })
-            );
-    }
-}
-
-async function onAction(e) {
-    const b = e.target.closest('[data-action]');
-    if (!b || b.disabled) return;
-    b.disabled = true;
 
     try {
-        await handle(b.dataset.action, b);
-    } catch (error) {
-        toast(error.message, true);
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content })
+      });
+      if (!resp) return;
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        showToast((err && (err.message || err.error)) || 'Error al agregar comentario', 'error');
+        return;
+      }
+
+      showToast('Comentario agregado con éxito', 'success');
+      textarea.value = '';
+      await loadComments(ticketId);
+    } catch (err) {
+      showToast('Error de red al agregar comentario', 'error');
     } finally {
-        b.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Agregar Comentario';
+      }
     }
-}
+  }
 
-$('#content').addEventListener('click', onAction);
-$('#modal-body').addEventListener('click', onAction);
-$('#modal-body').addEventListener('input', saleEstimate);
+  // 13. Trazabilidad y Auditoría (RF-06)
+  async function loadHistory(ticketId) {
+    const timeline = document.getElementById('historyTimeline');
+    if (!timeline) return;
+    timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando historial de auditoría...</div>';
 
-$('#content').addEventListener('input', e => {
-    if (e.target.id !== 'filter') return;
-    const term = e.target.value.toLocaleLowerCase();
-    let shown = 0;
-
-    $('#content').querySelectorAll('tbody tr').forEach(row => {
-        row.hidden = !row.textContent.toLocaleLowerCase().includes(term);
-        if (!row.hidden) shown++;
-    });
-
-    $('#empty-table').hidden = shown > 0;
-    $('#empty-table').textContent = term ? 'No hay coincidencias en esta página.' : 'Aún no hay registros.';
-});
-
-$('#session-button').onclick = async () => {
     try {
-        await refreshMe();
-        modal(
-            'Mi espacio',
-            `
-                <div class="info-row"><span>Usuario</span><b>${esc(state.me.username)}</b></div>
-                <div class="info-row"><span>Rol</span><b>${esc(state.me.role)}</b></div>
-                <div class="permission-group">
-                    <h3>Permisos de mi sesión</h3>
-                    ${chips(state.me.effectivePermissions)}
-                </div>
-            `,
-            null
-        );
-    } catch (error) {
-        toast(error.message, true);
-        logout();
-    }
-};
+      const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/history`);
+      if (!resp) return;
 
-if (state.token) {
-    enter().catch(() => {
-        logout();
-        toast('Inicia sesión nuevamente para continuar.', true);
+      if (!resp.ok) {
+        timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Sin historial registrado.</div>';
+        return;
+      }
+
+      const history = await resp.json();
+      if (history.length === 0) {
+        timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Sin cambios registrados.</div>';
+        return;
+      }
+
+      timeline.innerHTML = history.map(h => {
+        const dateStr = formatDate(h.fechaCambio);
+        const authorName = h.autor ? escapeHtml(h.autor.name || h.autor.email) : 'Sistema';
+        const authorRole = h.autor ? h.autor.role : 'SYSTEM';
+        const oldState = h.estadoAnterior
+          ? `<span class="badge badge-status-${h.estadoAnterior}" style="font-size: 10px;">${h.estadoAnterior.replace('_', ' ')}</span>`
+          : '<span style="color: #94A3B8; font-size: 11px;">INICIO</span>';
+        const newState = `<span class="badge badge-status-${h.estadoNuevo}" style="font-size: 10px;">${h.estadoNuevo.replace('_', ' ')}</span>`;
+        const comment = escapeHtml(h.comentarioTransicion || 'Cambio de estado');
+
+        return `
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+              <div class="timeline-meta">
+                <span>
+                  <strong>${authorName}</strong> (${authorRole})
+                </span>
+                <span>${dateStr}</span>
+              </div>
+              <div style="margin: 6px 0; display: flex; align-items: center; gap: 8px;">
+                ${oldState} <span style="color: #94A3B8;">&rarr;</span> ${newState}
+              </div>
+              <div class="timeline-comment">${comment}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      console.error(e);
+      timeline.innerHTML = '<div style="color: #E11D48; font-size: 13px;">Error al cargar auditoría.</div>';
+    }
+  }
+
+  // 14. Modales, Navegación de Vistas y Pestañas
+  function openModal(modalId) {
+    const el = document.getElementById(modalId);
+    if (el) el.classList.add('active');
+  }
+
+  function closeModal(modalId) {
+    const el = document.getElementById(modalId);
+    if (el) el.classList.remove('active');
+  }
+
+  function switchTab(targetTabId) {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === targetTabId);
     });
-}
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.style.display = content.id === targetTabId ? 'block' : 'none';
+    });
+  }
+
+  function switchMainView(viewName) {
+    const secHelpdesk = document.getElementById('sectionHelpdesk');
+    const secAdmin = document.getElementById('sectionAdmin');
+    const btnNavHelpdesk = document.getElementById('btnNavHelpdesk');
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
+
+    if (viewName === 'admin') {
+      if (AuthGuard.getRole() !== 'ADMIN') {
+        showToast('Acceso denegado: Solo administradores pueden ver esta sección', 'error');
+        return;
+      }
+      if (secHelpdesk) secHelpdesk.style.display = 'none';
+      if (secAdmin) secAdmin.style.display = 'block';
+      if (btnNavHelpdesk) btnNavHelpdesk.classList.remove('active-view-btn');
+      if (btnNavAdmin) btnNavAdmin.classList.add('active-view-btn');
+      loadAdminUsers();
+    } else {
+      if (secHelpdesk) secHelpdesk.style.display = 'block';
+      if (secAdmin) secAdmin.style.display = 'none';
+      if (btnNavHelpdesk) btnNavHelpdesk.classList.add('active-view-btn');
+      if (btnNavAdmin) btnNavAdmin.classList.remove('active-view-btn');
+      loadTickets();
+    }
+  }
+
+  // 15. Vinculación Integral de Eventos en el DOM (REPARACIÓN CRÍTICA)
+  function setupEventListeners() {
+    // Logout
+    const btnLogout = document.getElementById('btnLogout');
+    if (btnLogout) {
+      btnLogout.addEventListener('click', async () => {
+        await AuthGuard.logout();
+      });
+    }
+
+    // Refresh
+    const btnRefresh = document.getElementById('btnRefresh');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', async () => {
+        await loadDashboardMetrics();
+        await loadTickets();
+        showToast('Tablero de incidencias actualizado');
+      });
+    }
+
+    // Navegación de Vistas (Helpdesk vs Administración)
+    const btnNavHelpdesk = document.getElementById('btnNavHelpdesk');
+    if (btnNavHelpdesk) {
+      btnNavHelpdesk.addEventListener('click', () => switchMainView('helpdesk'));
+    }
+
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
+    if (btnNavAdmin) {
+      btnNavAdmin.addEventListener('click', () => switchMainView('admin'));
+    }
+
+    // Eventos de la Vista de Administración
+    const btnRefreshAdminUsers = document.getElementById('btnRefreshAdminUsers');
+    if (btnRefreshAdminUsers) {
+      btnRefreshAdminUsers.addEventListener('click', async () => {
+        await loadAdminUsers();
+        showToast('Lista de usuarios actualizada');
+      });
+    }
+
+    const searchUserInput = document.getElementById('searchUserInput');
+    if (searchUserInput) {
+      searchUserInput.addEventListener('input', e => {
+        AppState.userSearchQuery = e.target.value;
+        renderAdminUsersTable();
+      });
+    }
+
+    const filterUserRole = document.getElementById('filterUserRole');
+    if (filterUserRole) {
+      filterUserRole.addEventListener('change', e => {
+        AppState.userFilterRole = e.target.value;
+        renderAdminUsersTable();
+      });
+    }
+
+    const btnResetUserFilters = document.getElementById('btnResetUserFilters');
+    if (btnResetUserFilters) {
+      btnResetUserFilters.addEventListener('click', () => {
+        AppState.userSearchQuery = '';
+        AppState.userFilterRole = '';
+        if (searchUserInput) searchUserInput.value = '';
+        if (filterUserRole) filterUserRole.value = '';
+        renderAdminUsersTable();
+      });
+    }
+
+    // Modal Crear / Editar
+    const btnOpenCreateModal = document.getElementById('btnOpenCreateModal');
+    if (btnOpenCreateModal) {
+      btnOpenCreateModal.addEventListener('click', openCreateModal);
+    }
+
+    const btnCloseCreateModal = document.getElementById('btnCloseCreateModal');
+    if (btnCloseCreateModal) {
+      btnCloseCreateModal.addEventListener('click', () => {
+        closeModal('modalCreateTicket');
+      });
+    }
+
+    const btnCancelCreate = document.getElementById('btnCancelCreate');
+    if (btnCancelCreate) {
+      btnCancelCreate.addEventListener('click', () => {
+        closeModal('modalCreateTicket');
+      });
+    }
+
+    const formCreateTicket = document.getElementById('formCreateTicket');
+    if (formCreateTicket) {
+      formCreateTicket.addEventListener('submit', handleCreateOrUpdateTicket);
+    }
+
+    // Modal Detalle
+    const btnCloseDetailModal = document.getElementById('btnCloseDetailModal');
+    if (btnCloseDetailModal) {
+      btnCloseDetailModal.addEventListener('click', () => {
+        closeModal('modalDetailTicket');
+      });
+    }
+
+    const btnExitDetail = document.getElementById('btnExitDetail');
+    if (btnExitDetail) {
+      btnExitDetail.addEventListener('click', () => {
+        closeModal('modalDetailTicket');
+      });
+    }
+
+    // Pestañas del Modal
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabTarget = btn.getAttribute('data-tab');
+        if (tabTarget) {
+          switchTab(tabTarget);
+        }
+      });
+    });
+
+    // Filtros de tabla de incidencias
+    const filterStatus = document.getElementById('filterStatus');
+    if (filterStatus) {
+      filterStatus.addEventListener('change', e => {
+        AppState.activeFilterStatus = e.target.value;
+        updateActiveCard();
+        loadTickets();
+      });
+    }
+
+    const filterPriority = document.getElementById('filterPriority');
+    if (filterPriority) {
+      filterPriority.addEventListener('change', e => {
+        AppState.activeFilterPriority = e.target.value;
+        loadTickets();
+      });
+    }
+
+    const filterCategory = document.getElementById('filterCategory');
+    if (filterCategory) {
+      filterCategory.addEventListener('change', e => {
+        AppState.activeFilterCategory = e.target.value;
+        loadTickets();
+      });
+    }
+
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.addEventListener('input', e => {
+        AppState.searchQuery = e.target.value;
+        renderTicketsTable();
+      });
+    }
+
+    const btnResetFilters = document.getElementById('btnResetFilters');
+    if (btnResetFilters) {
+      btnResetFilters.addEventListener('click', () => {
+        AppState.activeFilterStatus = '';
+        AppState.activeFilterPriority = '';
+        AppState.activeFilterCategory = '';
+        AppState.searchQuery = '';
+        if (filterStatus) filterStatus.value = '';
+        if (filterPriority) filterPriority.value = '';
+        if (filterCategory) filterCategory.value = '';
+        if (searchInput) searchInput.value = '';
+        updateActiveCard();
+        loadTickets();
+      });
+    }
+
+    // Click en Tarjetas de Métricas para filtrar
+    document.querySelectorAll('.metric-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const filterVal = card.getAttribute('data-filter') || '';
+        AppState.activeFilterStatus = filterVal;
+        if (filterStatus) filterStatus.value = filterVal;
+        updateActiveCard();
+        loadTickets();
+      });
+    });
+
+    // Cerrar modal al presionar Escape
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        closeModal('modalCreateTicket');
+        closeModal('modalDetailTicket');
+      }
+    });
+
+    // Cerrar modal al hacer clic en el backdrop / overlay
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) {
+          overlay.classList.remove('active');
+        }
+      });
+    });
+  }
+
+  function updateActiveCard() {
+    document.querySelectorAll('.metric-card').forEach(card => {
+      const filter = card.getAttribute('data-filter');
+      if (AppState.activeFilterStatus === filter) {
+        card.classList.add('active-filter');
+      } else {
+        card.classList.remove('active-filter');
+      }
+    });
+  }
+
+  // 16. Exposición Global para Acciones Directas en la Tabla
+  window.CampusDesk = {
+    openDetailModal: openDetailModal,
+    openCreateModal: openCreateModal,
+    openEditModal: openEditModal,
+    changeStatusFromDetail: changeStatusFromDetail,
+    openAssignQuick: function(ticketId) {
+      openDetailModal(ticketId);
+    },
+    quickChangeStatus: function(ticketId, newStatus, comment) {
+      updateStatus(ticketId, newStatus, comment);
+    },
+    assignTechnician: assignTechnician,
+    updateStatus: updateStatus,
+    resolveTicket: resolveTicket,
+    handleAddComment: handleAddComment,
+    switchMainView: switchMainView,
+    filterTicketsByUser: function(userEmail) {
+      switchMainView('helpdesk');
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) {
+        searchInput.value = userEmail;
+        AppState.searchQuery = userEmail;
+        renderTicketsTable();
+      }
+    }
+  };
+
+  // 17. Inicialización Principal Robusta
+  async function initApp() {
+    setupEventListeners();
+    await initUserProfile();
+    if (AuthGuard.getRole() === 'ADMIN') {
+      await loadTechnicians();
+    }
+    await loadDashboardMetrics();
+    await loadTickets();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
+
+})();

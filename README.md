@@ -1,262 +1,215 @@
-# NEXO · Plantilla de gestión y seguridad
+# CAMPUSDESK — Plataforma de Gestión de Incidencias Técnicas
 
-Proyecto completo con **backend Java 21 / Spring Boot 4.1.1 / PostgreSQL** y
-**frontend HTML, CSS y JavaScript**. Incluye autenticación JWT, roles y permisos,
-y módulos de clientes, productos y ventas.
-
-Esta carpeta reúne ambas aplicaciones. El backend valida las reglas de negocio
-y autoriza cada operación; el frontend ofrece una interfaz acorde a los permisos
-de la sesión.
-
-## Estructura
-
-```text
-sguridad java 21/
-├── README.md                            Guía general
-├── spring-security-user-role-management/
-│   ├── README.md                        Guía del backend
-│   ├── build.gradle                     Dependencias y compilación
-│   ├── gradlew.bat                      Gradle Wrapper para Windows
-│   ├── src/main/java/                   Seguridad y módulos comerciales
-│   ├── src/main/resources/              Perfiles, banner y migración SQL
-│   ├── src/test/                        Pruebas del backend
-│   └── docs/PLANTILLA_MODULOS.md         Guía para ampliar módulos
-└── Frontend/
-    ├── README.md                        Guía de la interfaz
-    ├── index.html                       Página de entrada
-    ├── styles.css                       Diseño responsive
-    ├── app.js                           Cliente REST y flujos
-    └── vista-previa.png                  Captura con datos de prueba
-```
-
-## Guías
-
-- [Backend: configuración, endpoints y permisos](spring-security-user-role-management/README.md).
-- [Frontend: ejecución, pantallas y sesión](Frontend/README.md).
-- [Módulos: ejemplos y extensión de la plantilla](spring-security-user-role-management/docs/PLANTILLA_MODULOS.md).
-
-## Requisitos
-
-- JDK 21 para ejecutar y compilar el backend.
-- PostgreSQL con una base de datos disponible.
-- Navegador moderno para el frontend.
-- Gradle Wrapper incluido; no necesitas instalar Gradle.
-- Opcional: Python o Live Server para servir el frontend por HTTP.
-
-El frontend no necesita Node.js, paquetes npm ni compilación.
-
-## Inicio rápido
-
-### 1. Preparar PostgreSQL
-
-Inicia PostgreSQL y crea la base desde pgAdmin o tu cliente SQL:
-
-```sql
-CREATE DATABASE sistema_gestion_usuarios;
-```
-
-La aplicación crea o actualiza las tablas dentro de esa base con
-`spring.jpa.hibernate.ddl-auto=update` en desarrollo. No crea el servidor ni
-importa automáticamente datos de MySQL.
-
-### 2. Iniciar el backend
-
-Abre una terminal PowerShell:
-
-```powershell
-cd 'D:\Spring Boot Proyectos\sguridad java 21\spring-security-user-role-management'
-$env:DB_URL = 'jdbc:postgresql://localhost:5432/sistema_gestion_usuarios'
-$env:DB_USERNAME = 'postgres'
-$env:DB_PASSWORD = '<contraseña de tu PostgreSQL>'
-.\gradlew.bat bootRun
-```
-
-Por defecto usa el perfil `dev` y escucha en `http://localhost:8050`.
-El banner NEXO muestra las versiones de Java, Spring Boot y el perfil activo.
-
-### 3. Abrir el frontend
-
-Abre [Frontend/index.html](Frontend/index.html) en el navegador o sirve la carpeta.
-Por ejemplo, si tienes Python instalado, abre otra terminal:
-
-```powershell
-cd 'D:\Spring Boot Proyectos\sguridad java 21\Frontend'
-python -m http.server 5500 --bind 127.0.0.1
-```
-
-Abre [http://127.0.0.1:5500](http://127.0.0.1:5500). En el login, despliega
-**Conexión al servidor** y usa `http://localhost:8050`, sin `/api` al final.
-El backend debe seguir ejecutándose mientras utilizas la interfaz.
-
-### 4. Iniciar sesión
-
-Si la cuenta inicial de desarrollo no fue modificada:
-
-| Campo | Valor |
-| --- | --- |
-| Usuario | `superadmin` |
-| Contraseña | `SuperAdmin123!` |
-| Rol | `ADMIN` |
-
-Las credenciales de la aplicación son diferentes de las de PostgreSQL. El
-bootstrap no reemplaza datos de una cuenta inicial que ya existe.
-
-En Swagger también puedes ejecutar `POST /api/auth/login`. La respuesta es un
-JWT como texto; pégalo en **Authorize** sin escribir Bearer.
-
-| Recurso | Dirección de desarrollo |
-| --- | --- |
-| Backend | http://localhost:8050 |
-| Swagger UI | http://localhost:8050/swagger-ui.html |
-| OpenAPI JSON | http://localhost:8050/v3/api-docs |
-| Frontend con el servidor de ejemplo | http://127.0.0.1:5500 |
-
-## Funcionalidades
-
-| Módulo | Alcance |
-| --- | --- |
-| Autenticación | Login, JWT y consulta de sesión actual |
-| Usuarios | Alta, edición, habilitación, bloqueo, eliminación y accesos |
-| Roles | Catálogo dinámico y permisos compartidos por rol |
-| Permisos | Catálogo y concesiones individuales |
-| Clientes | Gestión de contactos y desactivación |
-| Productos | Catálogo, SKU único, precios y existencias |
-| Ventas | Registro, detalle histórico, total calculado y anulación |
-| Inicio | Métricas y accesos rápidos según la cuenta |
-
-Las ventas usan precios de la base, calculan importes con BigDecimal y descuentan
-inventario en una transacción. Si fallan, los cambios se revierten. Anular una
-venta repone existencias una sola vez y conserva el detalle original. Desactivar
-clientes o productos no elimina el historial de ventas.
-
-## Cómo funciona la seguridad
-
-Cada usuario tiene **un solo rol**. Sus permisos efectivos son la unión de los
-permisos del rol y los permisos individuales. Así, dos usuarios VENDEDOR pueden
-compartir las operaciones habituales, mientras solo uno recibe SALE_CANCEL.
-
-```text
-Login → JWT → Sesión actual → Menús disponibles → Operación protegida
-                                                    ↓
-                                      Validación de permisos en backend
-```
-
-El frontend conserva el JWT en `sessionStorage` y la URL de la API en
-`localStorage`; no guarda contraseñas. La navegación se adapta a los accesos
-recibidos de `/api/auth/me`. El servidor vuelve a verificar permisos y estado
-de cuenta en cada petición: ocultar botones no sustituye la seguridad.
-
-ADMIN recibe los permisos base al arrancar. CUSTOMER recibe `random_order`;
-no tiene acceso comercial automático. Roles personalizados y permisos adicionales
-se gestionan desde la API o la interfaz. Cambiar el rol conserva los permisos
-individuales. Bloquear, deshabilitar o eliminar una cuenta impide usar sus tokens.
-No hay renovación automática ni lista de revocación de JWT.
-
-## Configuración por entorno
-
-La configuración del backend se encuentra en:
-
-- `application.properties`: selecciona `dev` por defecto.
-- `application-dev.properties`: conexión, puerto, bootstrap y JWT de desarrollo.
-- `application-test.properties`: configuración independiente para pruebas.
-- `application-prod.properties`: archivo que puedes crear para producción;
-  actualmente no se incluye.
-
-JWT en **application-dev.properties**:
-
-```properties
-security.jwt.secret=${JWT_SECRET:User_M4n4gement}
-security.jwt.issuer=${JWT_ISSUER:User_R0les_M4n4gement}
-security.jwt.expiration=${JWT_EXPIRATION:15d}
-```
-
-La duración admite `30m`, `8h`, `15d` o ISO-8601. Puedes reemplazar los valores
-con JWT_SECRET, JWT_ISSUER y JWT_EXPIRATION. Reinicia el backend después de
-modificarlos. Cambiar clave o emisor invalida tokens anteriores; cambiar duración
-solo afecta a los emitidos después del cambio.
-
-Para usar un futuro perfil prod, define sus propiedades y ejecuta con
-`SPRING_PROFILES_ACTIVE=prod`. Ese perfil no hereda application-dev.properties.
-Utiliza claves, credenciales y orígenes CORS propios del entorno. La configuración
-CORS actual permite cualquier origen. Un frontend servido por HTTPS necesita
-una API HTTPS.
-
-## Flujo para probar el proyecto
-
-1. Entra con el administrador.
-2. Crea un cliente y un producto con existencias.
-3. Registra una venta y consulta su detalle.
-4. Anula la venta y verifica la reposición del inventario.
-5. Crea un rol VENDEDOR con permisos comerciales de consulta y creación.
-6. Crea una cuenta y asígnale ese rol.
-7. Dale SALE_CANCEL como permiso individual si debe anular ventas.
-8. Inicia sesión con esa cuenta y comprueba sus menús y acciones.
-
-Encontrarás cuerpos JSON y la tabla completa de endpoints en el README del backend.
-Las cuentas de seguridad y los clientes comerciales son entidades independientes.
-
-## Compilación y verificación
-
-Desde la carpeta del backend:
-
-```powershell
-.\gradlew.bat test
-.\gradlew.bat clean test bootJar
-java -jar build/libs/usermanagement-0.0.1-SNAPSHOT.jar
-```
-
-Las pruebas usan H2 en modo PostgreSQL y una configuración JWT propia; no necesitan
-modificar la base de desarrollo. Cubren seguridad, catálogos, Swagger, sesión,
-JWT configurable y operaciones comerciales, incluidas ventas concurrentes,
-rollback y anulación.
-
-Desde la carpeta del frontend, si tienes Node.js instalado:
-
-```powershell
-node --check app.js
-```
-
-Node.js solo sirve para esa comprobación opcional. La interfaz se verificó en el
-navegador contra Spring Boot/H2 temporal. La seguridad se probó anteriormente
-contra esquemas PostgreSQL aislados; las últimas ampliaciones comerciales y JWT
-se verificaron con H2 porque PostgreSQL local estaba apagado. No se incluye una
-suite automatizada de pruebas del navegador.
-
-## Ampliar la plantilla
-
-Los módulos comerciales del backend están en `modules/customer`, `modules/product`
-y `modules/sale`, separados en entidades, DTO, repositorios, servicios y
-controladores. Usa su estructura para añadir funcionalidades y protege cada
-operación con `@PreAuthorize` y el permiso correspondiente.
-
-En el frontend, registra el módulo en `sections` de `app.js`, sus condiciones de
-visibilidad y sus formularios/listados. Mantén las validaciones del servidor y
-el escape de datos al renderizar HTML. Crear una entrada en el catálogo de
-permisos no crea automáticamente un endpoint ni una pantalla.
-
-La plantilla no incluye pagos, impuestos, facturación fiscal, múltiples monedas,
-devoluciones parciales ni aislamiento por empresa/propietario. Estos comportamientos
-se implementan según las necesidades del proyecto que la utilice.
-
-## Problemas frecuentes
-
-| Problema | Revisión |
-| --- | --- |
-| Backend no inicia | JDK 21, PostgreSQL activo, base creada y credenciales correctas |
-| Frontend no conecta | URL de API, puerto, backend activo, CORS y HTTP/HTTPS |
-| Nuevas tablas no aparecen | Arrancar el backend contra la base correcta; Hibernate actualiza al iniciar |
-| No aparece un módulo | Permisos efectivos en Mi espacio; actualizar la interfaz |
-| Login rechazado | Contraseña y estados de cuenta; no usar la contraseña de PostgreSQL |
-| Token rechazado tras cambiar configuración | Volver a iniciar sesión |
-| SKU repetido o stock insuficiente | Revisar catálogo y existencias; no repetir una venta sin consultar su historial |
-
-![NEXO: vista previa con datos de prueba](Frontend/vista-previa.png)
+**CAMPUSDESK** es un sistema integral de mesa de ayuda y gestión del ciclo de vida de incidencias técnicas en entornos académicos y corporativos. Diseñado bajo una arquitectura desacoplada y moderna, implementa control de acceso basado en roles (RBAC), máquina de estados finita estricta, trazabilidad inmutable de auditoría y persistencia de sesiones en caché distribuida.
 
 ---
-## 👨‍💻 Autor
 
-**Ing. Cristian Díaz**
+## 1. Integrantes del Equipo
 
-<p align="center">
-  <img width="300" src="https://i.imgur.com/a7YBcsp.png">
-</p>
+> `[INFORMACIÓN_PENDIENTE: Ingresar nombres y datos de los integrantes del equipo académico antes de la entrega final]`
+
+---
+
+## 2. Arquitectura y Tecnologías
+
+El sistema se compone de dos capas principales completamente contenerizadas:
+
+- **Backend REST API**:
+  - **Lenguaje**: Java 21 (Eclipse Temurin 21 LTS).
+  - **Framework**: Spring Boot 4.1.1.
+  - **Seguridad**: Spring Security con autenticación basada en tokens JWT (HMAC-SHA256) y validación de sesiones en Redis.
+  - **Persistencia Relacional**: PostgreSQL 16 Alpine con Spring Data JPA y Hibernate 7.
+  - **Caché y Sesiones**: Redis 7 Alpine para validación de tokens activos, metadata de sesión y revocación en logout.
+  - **Documentación API**: OpenAPI 3.0 / Swagger UI (SpringDoc).
+  - **Herramienta de Construcción**: Gradle 8.14.3 con Gradle Wrapper.
+
+- **Frontend Web**:
+  - **Estructura y Lógica**: HTML5 semántico y JavaScript estándar (Vanilla JS ES6+).
+  - **Estilos**: CSS3 con diseño responsivo, CSS variables para diseño coherente y transiciones fluidas.
+  - **Servidor Web**: Nginx 1.27 Alpine en contenedor Docker dedicado.
+
+---
+
+## 3. Puertos Oficiales del Proyecto
+
+| Servicio | Contenedor | Puerto Host | Puerto Interno | Protocolo / URL |
+| :--- | :--- | :--- | :--- | :--- |
+| **Frontend Web** | `campusdesk-frontend` | **5506** | 80 | `http://localhost:5506` |
+| **Backend REST API** | `campusdesk-backend` | **8056** | 8056 | `http://localhost:8056` |
+| **Swagger UI** | `campusdesk-backend` | **8056** | 8056 | `http://localhost:8056/swagger-ui/index.html` |
+| **PostgreSQL 16** | `campusdesk-db` | **5436** | 5432 | `localhost:5436` |
+| **Redis 7** | `campusdesk-redis` | **6385** | 6379 | `localhost:6385` |
+
+---
+
+## 4. Estructura del Repositorio
+
+```text
+Proyecto_CAMPUSDESK/
+├── .env.example                                Plantilla de variables de entorno seguras
+├── docker-compose.yml                          Orquestación de servicios (BD, Redis, Backend, Frontend)
+├── verify.ps1                                  Script de certificación de pruebas (Windows PowerShell)
+├── verify.sh                                   Script de certificación de pruebas (Linux / macOS / Bash)
+├── init-db/
+│   └── init.sql                                Semilla inicial de base de datos con cuentas y roles
+├── docs/
+│   └── evidencias/
+│       └── README.md                           Catálogo de evidencias y lista de capturas
+├── Frontend/
+│   ├── index.html                              Portal de inicio de sesión
+│   ├── dashboard.html                          Dashboard interactivo, métricas, tickets y administración
+│   ├── registro.html                           Formulario de registro con política de contraseñas
+│   ├── app.js                                  Lógica de cliente REST, modales, RBAC y delegación de eventos
+│   ├── styles.css                              Tokens de diseño, componentes y diseño responsivo
+│   ├── Dockerfile                              Empaquetado Nginx Alpine del cliente web
+│   └── nginx.conf                              Configuración Nginx para rutas SPA
+└── spring-security-user-role-management/
+    ├── build.gradle                            Configuración Gradle y dependencias Spring Boot 4
+    ├── Dockerfile                              Multi-stage build (JDK 21 builder -> JRE 21 runtime)
+    └── src/
+        ├── main/
+        │   ├── java/campusdesk/
+        │   │   ├── config/                     CORS, Redis, OpenAPI
+        │   │   ├── controller/                 Endpoints REST (Auth, Tickets, Comments, Dashboard, Users)
+        │   │   ├── dto/                        DTOs de petición y respuesta validados
+        │   │   ├── entity/                     Entidades JPA (User, Ticket, TicketHistory, TicketComment)
+        │   │   ├── exception/                  Manejo global de excepciones (ApiExceptionHandler)
+        │   │   ├── repository/                 Repositorios Spring Data JPA
+        │   │   ├── security/                   Filtro JWT, JwtTokenProvider, SecurityConfig
+        │   │   └── service/                    Lógica de negocio, RBAC y máquina de estados
+        │   └── resources/
+        │       ├── application.properties      Configuración base
+        │       └── application-dev.properties  Perfil de desarrollo
+        └── test/                               Suite de pruebas unitarias y de integración (74 tests)
+```
+
+---
+
+## 5. Variables de Entorno y Secretos
+
+El archivo `.env` local no se encuentra versionado (`.gitignore`). Para configurar un nuevo entorno, copie `.env.example` a `.env`:
+
+```bash
+cp .env.example .env
+```
+
+### Variables Requeridas:
+- `DB_USER`: Usuario de PostgreSQL (por defecto: `campususer`).
+- `DB_PASSWORD`: Contraseña de PostgreSQL (definir un valor seguro).
+- `DB_NAME`: Nombre de la base de datos (`sistema_gestion_usuarios`).
+- `REDIS_PASSWORD`: Contraseña de Redis (definir un valor seguro).
+- `JWT_SECRET`: Secreto criptográfico HMAC-SHA256 para firma y validación de tokens. **Debe tener al menos 32 caracteres**. La aplicación falla al iniciar si no cumple esta longitud mínima.
+- `CORS_ALLOWED_ORIGINS`: Lista explícita de orígenes permitidos (por defecto: `http://localhost:5506,http://localhost:5500`).
+
+---
+
+## 6. Roles, Permisos y Máquina de Estados
+
+### Matriz de Roles (RBAC)
+
+| Operación | Rol `USER` | Rol `TECHNICIAN` | Rol `ADMIN` |
+| :--- | :---: | :---: | :---: |
+| Registrarse e iniciar sesión | Sí | Sí | Sí |
+| Crear nueva incidencia (inicia en `ABIERTA`) | Sí | No | No |
+| Editar incidencia (solo solicitante, `ABIERTA`, sin técnico) | **Sí** | No | No |
+| Consultar incidencias | Solo propias | Solo asignadas | Todas |
+| Asignar / reasignar técnico (solo en `ABIERTA` o `ASIGNADA`) | No | No | **Sí** |
+| Pasar a `EN_PROCESO` | No | **Solo técnico asignado** | No |
+| Pasar a `RESUELTA` | No | **Solo técnico asignado** | No |
+| Pasar a `CERRADA` | **Solo solicitante** | No | No |
+| Comentar en incidencias | Propias (no cerradas) | Asignadas (no cerradas) | Todas (no cerradas) |
+| Consultar lista de técnicos (`/api/users/technicians`) | No (HTTP 403) | No (HTTP 403) | **Sí** (HTTP 200) |
+| Consultar lista de usuarios (`/api/users`) | No (HTTP 403) | No (HTTP 403) | **Sí** (HTTP 200) |
+
+### Transiciones de Estado y Respuestas HTTP
+- **Asignación en estado incompatible** (`EN_PROCESO`, `RESUELTA`, `CERRADA`): **HTTP 409 Conflict**.
+- **Transición no autorizada** (ej. admin o usuario intentando pasar a `EN_PROCESO` o `RESUELTA`): **HTTP 403 Forbidden**.
+- **Cierre por usuario no solicitante**: **HTTP 403 Forbidden**.
+- **Salto arbitrario de estados** (ej. de `ABIERTA` a `RESUELTA` sin pasar por `EN_PROCESO`): **HTTP 409 Conflict**.
+- **Comentarios en ticket `CERRADA`**: **HTTP 409 Conflict** (inmutabilidad).
+- **Contraseña débil en registro**: **HTTP 400 Bad Request**.
+
+---
+
+## 7. Cuentas de Prueba Pre-sembradas
+
+Las siguientes cuentas de prueba han sido inicializadas en `init.sql`:
+
+| Rol | Correo Electrónico | Contraseña |
+| :--- | :--- | :--- |
+| **ADMIN** | `superadmin@campusdesk.com` | `SuperAdmin123!` |
+| **TECHNICIAN** | `tecnico@campusdesk.com` | `Password123!` |
+| **USER** | `carlos@campusdesk.com` | `Password123!` |
+
+---
+
+## 8. Persistencia y Sesiones con Redis 7
+
+Redis se utiliza como almacén en memoria de alto rendimiento para:
+1. **Validación de Sesiones**: Cada token JWT generado en login se registra en Redis (`session:{token}`) con tiempo de expiración (TTL de 24 horas).
+2. **Revocación Inmediata (Logout)**: Al invocar `POST /api/auth/logout`, la clave de sesión se elimina de Redis, invalidando el JWT inmediatamente aunque no haya expirado cronológicamente.
+3. **Resiliencia**: Si Redis experimenta una caída momentánea, las operaciones de sesión capturan la excepción controladamente (`RedisConnectionFailureException`) reportando el estado sin corromper la persistencia de datos relacionales en PostgreSQL.
+
+---
+
+## 9. Instrucciones de Ejecución
+
+### Opción A: Despliegue con Docker Compose (Recomendado)
+
+1. Verificar que Docker Desktop esté en ejecución.
+2. Iniciar y construir todos los contenedores:
+   ```bash
+   docker compose up -d --build
+   ```
+3. Comprobar el estado de los contenedores:
+   ```bash
+   docker compose ps
+   ```
+4. Acceder a las aplicaciones:
+   - Frontend: `http://localhost:5506`
+   - Backend: `http://localhost:8056`
+   - Documentación Swagger: `http://localhost:8056/swagger-ui/index.html`
+
+### Opción B: Ejecución Local en Desarrollo
+
+1. **Servicios de infraestructura** (PostgreSQL en puerto 5436 y Redis en 6385):
+   ```bash
+   docker compose up -d db redis
+   ```
+2. **Backend Spring Boot**:
+   ```bash
+   cd spring-security-user-role-management
+   .\gradlew.bat bootRun --args='--spring.profiles.active=dev'
+   ```
+3. **Frontend**:
+   Servir la carpeta `Frontend/` mediante cualquier servidor HTTP estático (ej. Live Server de VS Code o Python):
+   ```bash
+   python -m http.server 5506 --directory Frontend
+   ```
+
+---
+
+## 10. Pruebas y Certificación
+
+### Suite de Tests Automatizados (Backend)
+Desde la carpeta `spring-security-user-role-management`:
+```powershell
+.\gradlew.bat clean test
+```
+*Resultado: **74/74 tests superados (100% PASS, 0 fallos)**.*
+
+### Script de Certificación Integral Oficial
+Desde la raíz del proyecto:
+- En Windows (PowerShell):
+  ```powershell
+  .\verify.ps1
+  ```
+- En Linux / macOS / Bash:
+  ```bash
+  ./verify.sh
+  ```
+*Resultado: **26/26 casos de prueba certificados (100% PASS)**.*
+
+### Catálogo de Evidencias
+Consulte la documentación detallada de evidencias y la guía de capturas visuales en:
+- [docs/evidencias/README.md](docs/evidencias/README.md)
