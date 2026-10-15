@@ -6,7 +6,7 @@
 
 ## 1. Integrantes del Equipo
 
-> `[INFORMACIÓN_PENDIENTE: Ingresar nombres y datos de los integrantes del equipo académico antes de la entrega final]`
+> `Lisseth Zapata, Alisson Suarez y Mafe`
 
 ---
 
