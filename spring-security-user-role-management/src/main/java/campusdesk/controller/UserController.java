@@ -30,9 +30,16 @@ public class UserController {
 
     private final UserService userService;
 
-    @Operation(summary = "Listar técnicos disponibles", description = "Permite a los administradores obtener la lista de técnicos para asignación de incidencias")
+    @Operation(summary = "Listar todos los usuarios registrados (F2)", description = "Exclusivo para ADMIN. Retorna lista de usuarios sin contraseñas ni hashes")
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<UserResponseDTO>> getAllUsers() {
+        return ResponseEntity.ok(userService.getAllUsers());
+    }
+
+    @Operation(summary = "Listar técnicos disponibles (E4)", description = "Permite exclusivamente a los administradores obtener la lista de técnicos para asignación de incidencias")
     @GetMapping("/technicians")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<UserResponseDTO>> getTechnicians() {
         return ResponseEntity.ok(userService.getTechnicians());
     }

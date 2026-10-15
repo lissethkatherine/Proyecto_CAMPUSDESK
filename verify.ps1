@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Script de Verificación y Certificación Oficial de CAMPUSDESK (TechNova Solutions)
+    Script de Verificacion y Certificacion Oficial de CAMPUSDESK (TechNova Solutions)
 .DESCRIPTION
     Ejecuta y valida rigurosamente los 10 Casos de Prueba Oficiales (CP-01 al CP-10),
-    la máquina de estados, el control de acceso RBAC, Redis 7 y el Frontend Nginx.
+    la maquina de estados, el control de acceso RBAC, Redis 7 y el Frontend Nginx.
 #>
 
 param(
@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Continue"
 
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "   CAMPUSDESK - CERTIFICACIÓN OFICIAL DE CASOS DE PRUEBA (CP-01 a CP-10) " -ForegroundColor Cyan
+Write-Host "   CAMPUSDESK - CERTIFICACION OFICIAL DE CASOS DE PRUEBA (CP-01 a CP-10) " -ForegroundColor Cyan
 Write-Host "   TechNova Solutions · Spring Boot 4 + Redis 7 + PostgreSQL 16   " -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 
@@ -59,9 +59,9 @@ try {
 }
 
 # ------------------------------------------------------------------------------
-# CP-02: Autenticación y generación de JWT con sesión en Redis
+# CP-02: Autenticacion y generacion de JWT con sesion en Redis
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-02] Autenticación y persistencia de sesión en Redis (RF-02 / CP-02)..." -ForegroundColor Yellow
+Write-Host "`n[CP-02] Autenticacion y persistencia de sesion en Redis (RF-02 / CP-02)..." -ForegroundColor Yellow
 $userToken = $null
 $adminToken = $null
 $techToken = $null
@@ -74,7 +74,7 @@ try {
         $userToken = $loginUserRes.token
         Report-Pass "CP-02.1: Login de usuario solicitante exitoso con JWT Bearer" "Token: $($userToken.Substring(0, 30))..."
     } else {
-        Report-Fail "CP-02.1: No se recibió token para el usuario"
+        Report-Fail "CP-02.1: No se recibio token para el usuario"
     }
 } catch {
     Report-Fail "CP-02.1: Fallo login usuario: $_"
@@ -88,35 +88,35 @@ try {
         $adminToken = $loginAdminRes.token
         Report-Pass "CP-02.2: Login de Administrador exitoso" "Rol verificado: $($loginAdminRes.role)"
     } else {
-        Report-Fail "CP-02.2: Login admin no devolvió rol ADMIN"
+        Report-Fail "CP-02.2: Login admin no devolvio rol ADMIN"
     }
 } catch {
     Report-Fail "CP-02.2: Fallo login admin: $_"
 }
 
-# 2.3 Login de Técnico
+# 2.3 Login de Tecnico
 try {
-    $loginTechBody = @{ email = "tecnico@campusdesk.com"; password = "Tecnico123!" } | ConvertTo-Json
+    $loginTechBody = @{ email = "tecnico@campusdesk.com"; password = "Password123!" } | ConvertTo-Json
     $loginTechRes = Invoke-RestMethod -Uri "$backendUrl/api/auth/login" -Method Post -Body $loginTechBody -ContentType "application/json" -TimeoutSec 10
     if ($loginTechRes.token -and $loginTechRes.role -eq "TECHNICIAN") {
         $techToken = $loginTechRes.token
-        Report-Pass "CP-02.3: Login de Técnico de soporte exitoso" "Rol verificado: $($loginTechRes.role)"
+        Report-Pass "CP-02.3: Login de Tecnico de soporte exitoso" "Rol verificado: $($loginTechRes.role)"
     } else {
-        Report-Fail "CP-02.3: Login técnico no devolvió rol TECHNICIAN"
+        Report-Fail "CP-02.3: Login tecnico no devolvio rol TECHNICIAN"
     }
 } catch {
-    Report-Fail "CP-02.3: Fallo login técnico: $_"
+    Report-Fail "CP-02.3: Fallo login tecnico: $_"
 }
 
 # ------------------------------------------------------------------------------
-# CP-03: Creación de ticket en estado ABIERTA
+# CP-03: Creacion de ticket en estado ABIERTA
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-03] Creación de incidencia en estado inicial ABIERTA (RF-03 / CP-03)..." -ForegroundColor Yellow
+Write-Host "`n[CP-03] Creacion de incidencia en estado inicial ABIERTA (RF-03 / CP-03)..." -ForegroundColor Yellow
 $ticketId = $null
 if ($userToken) {
     try {
         $createTicketBody = @{
-            title = "Falla de red en laboratorio 3 - Test Certificación"
+            title = "Falla de red en laboratorio 3 - Test Certificacion"
             description = "Los equipos no obtienen IP por DHCP y no hay salida a gateway"
             category = "REDES"
             priority = "ALTA"
@@ -135,13 +135,61 @@ if ($userToken) {
         Report-Fail "CP-03: Error al crear ticket: $_"
     }
 } else {
-    Report-Fail "CP-03: Omitido porque falló el login de usuario"
+    Report-Fail "CP-03: Omitido porque fallo el login de usuario"
 }
 
 # ------------------------------------------------------------------------------
-# CP-04: Asignación de técnico por Administrador (ABIERTA -> ASIGNADA)
+# CP-03.1: Edicion de incidencia en estado ABIERTA por solicitante (F1)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-04] Asignación de técnico por Administrador (RF-04 / CP-04)..." -ForegroundColor Yellow
+Write-Host "`n[CP-03.1] Edicion de incidencia ABIERTA por solicitante (F1)..." -ForegroundColor Yellow
+if ($userToken -and $ticketId) {
+    try {
+        $editBody = @{
+            title = "Falla de red en laboratorio 3 - ACTUALIZADA"
+            description = "Descripcion actualizada por el solicitante antes de asignacion"
+            category = "REDES"
+            priority = "CRITICA"
+        } | ConvertTo-Json
+        $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
+        $editRes = Invoke-RestMethod -Uri "$backendUrl/api/tickets/$ticketId" -Method Put -Headers $headersUser -Body $editBody -TimeoutSec 10
+        if ($editRes.title -eq "Falla de red en laboratorio 3 - ACTUALIZADA" -and $editRes.priority -eq "CRITICA") {
+            Report-Pass "CP-03.1: Edicion exitosa por el solicitante (F1)" "Titulo y prioridad actualizados correctamente"
+        } else {
+            Report-Fail "CP-03.1: Los datos no se actualizaron como se esperaba"
+        }
+    } catch {
+        Report-Fail "CP-03.1: Error al editar ticket: $_"
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-03.2: Rechazo de edicion por usuario no solicitante (F1 / HTTP 403)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-03.2] Rechazo de edicion por usuario no solicitante (F1)..." -ForegroundColor Yellow
+if ($adminToken -and $ticketId) {
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken"; "Content-Type" = "application/json" }
+        $forbiddenEdit = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId" -Method Put -Headers $headersAdmin -Body (@{
+            title = "Intento por no solicitante"
+            description = "Debe fallar"
+            category = "REDES"
+            priority = "BAJA"
+        } | ConvertTo-Json) -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-03.2: Se esperaba HTTP 403 pero respondio HTTP $($forbiddenEdit.StatusCode)"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 403) {
+            Report-Pass "CP-03.2: Intento de edicion por no-solicitante rechazado con HTTP 403" "Permiso F1 validado"
+        } else {
+            Report-Fail "CP-03.2: Codigo recibido: $code (esperado 403)"
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-04: Asignacion de tecnico por Administrador (ABIERTA -> ASIGNADA)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-04] Asignacion de tecnico por Administrador (RF-04 / CP-04)..." -ForegroundColor Yellow
 $tecnicoId = 2 # tecnico@campusdesk.com en seed init.sql
 if ($adminToken -and $ticketId) {
     try {
@@ -150,33 +198,57 @@ if ($adminToken -and $ticketId) {
         $assignRes = Invoke-RestMethod -Uri "$backendUrl/api/tickets/$ticketId/assign" -Method Patch -Headers $headersAdmin -Body $assignBody -TimeoutSec 10
 
         if ($assignRes.status -eq "ASIGNADA" -and $assignRes.tecnico.id -eq $tecnicoId) {
-            Report-Pass "CP-04: Transición exitosa a ASIGNADA y técnico asignado por ADMIN" "Técnico: $($assignRes.tecnico.name)"
+            Report-Pass "CP-04: Transicion exitosa a ASIGNADA y tecnico asignado por ADMIN" "Tecnico: $($assignRes.tecnico.name)"
         } else {
             Report-Fail "CP-04: Estado esperado ASIGNADA, recibido: $($assignRes.status)"
         }
     } catch {
-        Report-Fail "CP-04: Fallo al asignar técnico: $_"
+        Report-Fail "CP-04: Fallo al asignar tecnico: $_"
     }
 } else {
     Report-Fail "CP-04: Omitido por falta de adminToken o ticketId"
 }
 
 # ------------------------------------------------------------------------------
-# CP-05: Intento no autorizado de asignación de técnico por un USER
+# CP-04.1: Rechazo de edicion de incidencia ya asignada (F1 / HTTP 409)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-05] Rechazo de asignación de técnico intentada por usuario común (RF-08 / CP-05)..." -ForegroundColor Yellow
+Write-Host "`n[CP-04.1] Rechazo de edicion de incidencia en estado ASIGNADA (F1)..." -ForegroundColor Yellow
+if ($userToken -and $ticketId) {
+    try {
+        $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
+        $illegalEdit = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId" -Method Put -Headers $headersUser -Body (@{
+            title = "Intento ilegal de editar ticket asignado"
+            description = "Ya tiene tecnico asignado"
+            category = "REDES"
+            priority = "MEDIA"
+        } | ConvertTo-Json) -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-04.1: Se esperaba HTTP 409 pero respondio HTTP $($illegalEdit.StatusCode)"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 409) {
+            Report-Pass "CP-04.1: Edicion rechazada con HTTP 409 porque la incidencia ya esta ASIGNADA" "Regla F1 validada"
+        } else {
+            Report-Fail "CP-04.1: Codigo recibido: $code (esperado 409)"
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-05: Intento no autorizado de asignacion de tecnico por un USER
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-05] Rechazo de asignacion de tecnico intentada por usuario comun (RF-08 / CP-05)..." -ForegroundColor Yellow
 if ($userToken -and $ticketId) {
     try {
         $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
         $assignBody = @{ tecnicoId = $tecnicoId } | ConvertTo-Json
         $forbiddenRes = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId/assign" -Method Patch -Headers $headersUser -Body $assignBody -TimeoutSec 10 -ErrorAction Stop
-        Report-Fail "CP-05: Se esperaba HTTP 403 Forbidden pero el servidor retornó HTTP $($forbiddenRes.StatusCode)"
+        Report-Fail "CP-05: Se esperaba HTTP 403 Forbidden pero el servidor retorno HTTP $($forbiddenRes.StatusCode)"
     } catch {
         $code = $_.Exception.Response.StatusCode.value__
         if ($code -eq 403) {
-            Report-Pass "CP-05: Petición rechazada con HTTP 403 Forbidden como se esperaba" "Control de acceso RBAC verificado exitosamente"
+            Report-Pass "CP-05: Peticion rechazada con HTTP 403 Forbidden como se esperaba" "Control de acceso RBAC verificado exitosamente"
         } else {
-            Report-Fail "CP-05: Se recibió código HTTP $code en lugar de 403 Forbidden"
+            Report-Fail "CP-05: Se recibio codigo HTTP $code en lugar de 403 Forbidden"
         }
     }
 } else {
@@ -184,17 +256,17 @@ if ($userToken -and $ticketId) {
 }
 
 # ------------------------------------------------------------------------------
-# CP-06: Transición a EN_PROCESO por técnico asignado
+# CP-06: Transicion a EN_PROCESO por tecnico asignado
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-06] Transición a EN_PROCESO por el técnico asignado (RF-04 / CP-06)..." -ForegroundColor Yellow
+Write-Host "`n[CP-06] Transicion a EN_PROCESO por el tecnico asignado (RF-04 / CP-06)..." -ForegroundColor Yellow
 if ($techToken -and $ticketId) {
     try {
         $headersTech = @{ Authorization = "Bearer $techToken"; "Content-Type" = "application/json" }
-        $statusBody = @{ status = "EN_PROCESO"; comentario = "Técnico inicia revisión de cableado y switches" } | ConvertTo-Json
+        $statusBody = @{ status = "EN_PROCESO"; comentario = "Tecnico inicia revision de cableado y switches" } | ConvertTo-Json
         $statusRes = Invoke-RestMethod -Uri "$backendUrl/api/tickets/$ticketId/status" -Method Patch -Headers $headersTech -Body $statusBody -TimeoutSec 10
 
         if ($statusRes.status -eq "EN_PROCESO") {
-            Report-Pass "CP-06: Transición válida a EN_PROCESO por el técnico asignado" "Nuevo estado verificado: EN_PROCESO"
+            Report-Pass "CP-06: Transicion valida a EN_PROCESO por el tecnico asignado" "Nuevo estado verificado: EN_PROCESO"
         } else {
             Report-Fail "CP-06: Estado esperado EN_PROCESO, recibido: $($statusRes.status)"
         }
@@ -206,9 +278,29 @@ if ($techToken -and $ticketId) {
 }
 
 # ------------------------------------------------------------------------------
-# CP-07: Transición a RESUELTA por técnico asignado
+# CP-06.1: Rechazo de reasignacion en estado EN_PROCESO (E1 / HTTP 409)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-07] Transición a RESUELTA por el técnico asignado (RF-04 / CP-07)..." -ForegroundColor Yellow
+Write-Host "`n[CP-06.1] Rechazo de reasignacion en estado EN_PROCESO (E1)..." -ForegroundColor Yellow
+if ($adminToken -and $ticketId) {
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken"; "Content-Type" = "application/json" }
+        $reassignBody = @{ tecnicoId = $tecnicoId } | ConvertTo-Json
+        $illegalReassign = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId/assign" -Method Patch -Headers $headersAdmin -Body $reassignBody -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-06.1: Se esperaba HTTP 409 pero respondio HTTP $($illegalReassign.StatusCode)"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 409) {
+            Report-Pass "CP-06.1: Reasignacion en EN_PROCESO rechazada con HTTP 409" "Regla E1 validada"
+        } else {
+            Report-Fail "CP-06.1: Codigo recibido: $code (esperado 409)"
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-07: Transicion a RESUELTA por tecnico asignado
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-07] Transicion a RESUELTA por el tecnico asignado (RF-04 / CP-07)..." -ForegroundColor Yellow
 if ($techToken -and $ticketId) {
     try {
         $headersTech = @{ Authorization = "Bearer $techToken"; "Content-Type" = "application/json" }
@@ -216,7 +308,7 @@ if ($techToken -and $ticketId) {
         $resolveRes = Invoke-RestMethod -Uri "$backendUrl/api/tickets/$ticketId/status" -Method Patch -Headers $headersTech -Body $resolveBody -TimeoutSec 10
 
         if ($resolveRes.status -eq "RESUELTA") {
-            Report-Pass "CP-07: Transición válida a RESUELTA tras haber estado EN_PROCESO" "Estado verificado: RESUELTA"
+            Report-Pass "CP-07: Transicion valida a RESUELTA tras haber estado EN_PROCESO" "Estado verificado: RESUELTA"
         } else {
             Report-Fail "CP-07: Estado esperado RESUELTA, recibido: $($resolveRes.status)"
         }
@@ -228,16 +320,36 @@ if ($techToken -and $ticketId) {
 }
 
 # ------------------------------------------------------------------------------
-# CP-08: Intento de resolución inválida / salto arbitrario de estados
+# CP-07.1: Rechazo de reasignacion en estado RESUELTA (E1 / HTTP 409)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-08] Verificación de validación estricta de máquina de estados (RF-04 / CP-08)..." -ForegroundColor Yellow
+Write-Host "`n[CP-07.1] Rechazo de reasignacion en estado RESUELTA (E1)..." -ForegroundColor Yellow
+if ($adminToken -and $ticketId) {
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken"; "Content-Type" = "application/json" }
+        $reassignBody = @{ tecnicoId = $tecnicoId } | ConvertTo-Json
+        $illegalReassign2 = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId/assign" -Method Patch -Headers $headersAdmin -Body $reassignBody -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-07.1: Se esperaba HTTP 409 pero respondio HTTP $($illegalReassign2.StatusCode)"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 409) {
+            Report-Pass "CP-07.1: Reasignacion en RESUELTA rechazada con HTTP 409" "Regla E1 validada"
+        } else {
+            Report-Fail "CP-07.1: Codigo recibido: $code (esperado 409)"
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-08: Intento de resolucion invalida / salto arbitrario de estados
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-08] Verificacion de validacion estricta de maquina de estados (RF-04 / CP-08)..." -ForegroundColor Yellow
 # Crear un nuevo ticket que quede en ABIERTA e intentar resolverlo directamente
 if ($userToken -and $adminToken) {
     try {
         $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
         $rawTicket = Invoke-RestMethod -Uri "$backendUrl/api/tickets" -Method Post -Headers $headersUser -Body (@{
-            title = "Ticket para prueba de salto inválido"
-            description = "Descripción para comprobar máquina de estados"
+            title = "Ticket para prueba de salto invalido"
+            description = "Descripcion para comprobar maquina de estados"
             category = "SOFTWARE"
             priority = "BAJA"
         } | ConvertTo-Json) -TimeoutSec 10
@@ -252,13 +364,13 @@ if ($userToken -and $adminToken) {
                 comentario = "Intento ilegal de salto"
             } | ConvertTo-Json) -TimeoutSec 10 -ErrorAction Stop
 
-            Report-Fail "CP-08: La máquina de estados permitió saltar de ABIERTA a RESUELTA sin pasar por EN_PROCESO!"
+            Report-Fail "CP-08: La maquina de estados permitio saltar de ABIERTA a RESUELTA sin pasar por EN_PROCESO!"
         } catch {
             $code = $_.Exception.Response.StatusCode.value__
             if ($code -eq 409 -or $code -eq 400) {
-                Report-Pass "CP-08: Salto arbitrario de estados rechazado correctamente con HTTP $code" "Regla de transición estricta validada"
+                Report-Pass "CP-08: Salto arbitrario de estados rechazado correctamente con HTTP $code" "Regla de transicion estricta validada"
             } else {
-                Report-Fail "CP-08: Código de rechazo inesperado: $code"
+                Report-Fail "CP-08: Codigo de rechazo inesperado: $code"
             }
         }
     } catch {
@@ -267,21 +379,21 @@ if ($userToken -and $adminToken) {
 }
 
 # ------------------------------------------------------------------------------
-# CP-09: Consulta de métricas del Dashboard (RF-07)
+# CP-09: Consulta de metricas del Dashboard (RF-07)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-09] Consulta de métricas en tiempo real del Dashboard (RF-07 / CP-09)..." -ForegroundColor Yellow
+Write-Host "`n[CP-09] Consulta de metricas en tiempo real del Dashboard (RF-07 / CP-09)..." -ForegroundColor Yellow
 if ($adminToken) {
     try {
         $headersAdmin = @{ Authorization = "Bearer $adminToken" }
         $metricsRes = Invoke-RestMethod -Uri "$backendUrl/api/dashboard/metrics" -Method Get -Headers $headersAdmin -TimeoutSec 10
 
         if ($null -ne $metricsRes.total -and $null -ne $metricsRes.abiertas -and $null -ne $metricsRes.enProceso) {
-            Report-Pass "CP-09: Métricas del Dashboard computadas correctamente" "Total: $($metricsRes.total), Abiertas: $($metricsRes.abiertas), Asignadas: $($metricsRes.asignadas), En Proceso: $($metricsRes.enProceso), Resueltas: $($metricsRes.resueltas), Cerradas: $($metricsRes.cerradas)"
+            Report-Pass "CP-09: Metricas del Dashboard computadas correctamente" "Total: $($metricsRes.total), Abiertas: $($metricsRes.abiertas), Asignadas: $($metricsRes.asignadas), En Proceso: $($metricsRes.enProceso), Resueltas: $($metricsRes.resueltas), Cerradas: $($metricsRes.cerradas)"
         } else {
-            Report-Fail "CP-09: Objeto de métricas incompleto: $($metricsRes | ConvertTo-Json -Compress)"
+            Report-Fail "CP-09: Objeto de metricas incompleto: $($metricsRes | ConvertTo-Json -Compress)"
         }
     } catch {
-        Report-Fail "CP-09: Error al consultar métricas: $_"
+        Report-Fail "CP-09: Error al consultar metricas: $_"
     }
 } else {
     Report-Fail "CP-09: Omitido por falta de adminToken"
@@ -290,7 +402,7 @@ if ($adminToken) {
 # ------------------------------------------------------------------------------
 # CP-10: Cierre de ticket por usuario solicitante e inmutabilidad (RF-04, RF-08)
 # ------------------------------------------------------------------------------
-Write-Host "`n[CP-10] Cierre de ticket por solicitante y validación de inmutabilidad (RF-04 / RF-08 / CP-10)..." -ForegroundColor Yellow
+Write-Host "`n[CP-10] Cierre de ticket por solicitante y validacion de inmutabilidad (RF-04 / RF-08 / CP-10)..." -ForegroundColor Yellow
 if ($userToken -and $ticketId) {
     try {
         $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
@@ -306,13 +418,13 @@ if ($userToken -and $ticketId) {
                     content = "Intento ilegal de comentar en ticket cerrado"
                 } | ConvertTo-Json) -TimeoutSec 10 -ErrorAction Stop
 
-                Report-Fail "CP-10.2: Se permitió comentar en un ticket en estado CERRADA!"
+                Report-Fail "CP-10.2: Se permitio comentar en un ticket en estado CERRADA!"
             } catch {
                 $code = $_.Exception.Response.StatusCode.value__
                 if ($code -eq 409 -or $code -eq 400) {
                     Report-Pass "CP-10.2: Inmutabilidad estricta verificada: Comentarios rechazados con HTTP $code" "Ticket cerrado protegido contra modificaciones"
                 } else {
-                    Report-Fail "CP-10.2: Código inesperado en prueba de inmutabilidad: $code"
+                    Report-Fail "CP-10.2: Codigo inesperado en prueba de inmutabilidad: $code"
                 }
             }
         } else {
@@ -326,9 +438,9 @@ if ($userToken -and $ticketId) {
 }
 
 # ------------------------------------------------------------------------------
-# Pruebas de Hilo de Comentarios (RF-05) y Auditoría (RF-06)
+# Pruebas de Hilo de Comentarios (RF-05) y Auditoria (RF-06)
 # ------------------------------------------------------------------------------
-Write-Host "`n[Auditoría & Comentarios] Verificando historial cronológico y trazabilidad (RF-05, RF-06)..." -ForegroundColor Yellow
+Write-Host "`n[Auditoria & Comentarios] Verificando historial cronologico y trazabilidad (RF-05, RF-06)..." -ForegroundColor Yellow
 if ($adminToken -and $ticketId) {
     try {
         $headersAdmin = @{ Authorization = "Bearer $adminToken" }
@@ -336,26 +448,170 @@ if ($adminToken -and $ticketId) {
         if ($historyRes.Count -ge 4) {
             Report-Pass "RF-06: Trazabilidad inmutable completa ($($historyRes.Count) eventos registrados)" "Secuencia: ABIERTA -> ASIGNADA -> EN_PROCESO -> RESUELTA -> CERRADA"
         } else {
-            Report-Pass "RF-06: Historial de auditoría disponible ($($historyRes.Count) eventos)"
+            Report-Pass "RF-06: Historial de auditoria disponible ($($historyRes.Count) eventos)"
         }
     } catch {
         Report-Fail "RF-06: Error al consultar historial de ticket: $_"
     }
 }
+# ------------------------------------------------------------------------------
+# CP-10.3: Rechazo de reasignacion en estado CERRADA (E1 / HTTP 409)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-10.3] Rechazo de reasignacion en estado CERRADA (E1)..." -ForegroundColor Yellow
+if ($adminToken -and $ticketId) {
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken"; "Content-Type" = "application/json" }
+        $reassignBody = @{ tecnicoId = $tecnicoId } | ConvertTo-Json
+        $illegalReassign3 = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$ticketId/assign" -Method Patch -Headers $headersAdmin -Body $reassignBody -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-10.3: Se esperaba HTTP 409 pero respondio HTTP $($illegalReassign3.StatusCode)"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 409) {
+            Report-Pass "CP-10.3: Reasignacion en CERRADA rechazada con HTTP 409" "Regla E1 validada"
+        } else {
+            Report-Fail "CP-10.3: Codigo recibido: $code (esperado 409)"
+        }
+    }
+}
 
 # ------------------------------------------------------------------------------
-# Resumen Final de Certificación
+# CP-11: Proteccion de lista de tecnicos (E4 / RF-08)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-11] Proteccion de ruta de tecnicos /api/users/technicians (E4)..." -ForegroundColor Yellow
+if ($userToken -and $adminToken) {
+    try {
+        $headersUser = @{ Authorization = "Bearer $userToken" }
+        $userTechRes = Invoke-WebRequest -Uri "$backendUrl/api/users/technicians" -Method Get -Headers $headersUser -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-11.1: Usuario normal pudo consultar /api/users/technicians (HTTP $($userTechRes.StatusCode))"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 403) {
+            Report-Pass "CP-11.1: Acceso a /api/users/technicians por USER rechazado con HTTP 403" "Proteccion E4 validada"
+        } else {
+            Report-Fail "CP-11.1: Codigo inesperado: $code (esperado 403)"
+        }
+    }
+
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken" }
+        $adminTechRes = Invoke-RestMethod -Uri "$backendUrl/api/users/technicians" -Method Get -Headers $headersAdmin -TimeoutSec 10
+        if ($adminTechRes.Count -gt 0) {
+            Report-Pass "CP-11.2: Administrador consulta lista de tecnicos exitosamente" "$($adminTechRes.Count) tecnicos retornados"
+        } else {
+            Report-Fail "CP-11.2: Lista de tecnicos vacia para ADMIN"
+        }
+    } catch {
+        Report-Fail "CP-11.2: Error al consultar tecnicos como ADMIN: $_"
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-12: Administracion de usuarios registrados (F2 / RF-08)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-12] Consulta de todos los usuarios para ADMIN /api/users (F2)..." -ForegroundColor Yellow
+if ($userToken -and $adminToken) {
+    try {
+        $headersUser = @{ Authorization = "Bearer $userToken" }
+        $userAllRes = Invoke-WebRequest -Uri "$backendUrl/api/users" -Method Get -Headers $headersUser -TimeoutSec 10 -ErrorAction Stop
+        Report-Fail "CP-12.1: Usuario normal pudo consultar /api/users (HTTP $($userAllRes.StatusCode))"
+    } catch {
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 403) {
+            Report-Pass "CP-12.1: Acceso a /api/users por USER rechazado con HTTP 403" "Proteccion F2 validada"
+        } else {
+            Report-Fail "CP-12.1: Codigo inesperado: $code (esperado 403)"
+        }
+    }
+
+    try {
+        $headersAdmin = @{ Authorization = "Bearer $adminToken" }
+        $adminUsersRes = Invoke-RestMethod -Uri "$backendUrl/api/users" -Method Get -Headers $headersAdmin -TimeoutSec 10
+        if ($adminUsersRes.Count -gt 0) {
+            $hasSensitiveField = $false
+            foreach ($u in $adminUsersRes) {
+                if ($null -ne $u.password -or $null -ne $u.hash) {
+                    $hasSensitiveField = $true
+                }
+            }
+            if (-not $hasSensitiveField) {
+                Report-Pass "CP-12.2: ADMIN consulta /api/users exitosamente sin contrasenas ni hashes expuestos" "$($adminUsersRes.Count) usuarios verificados de forma segura"
+            } else {
+                Report-Fail "CP-12.2: La respuesta expuso contrasenas o hashes!"
+            }
+        } else {
+            Report-Fail "CP-12.2: Lista de usuarios vacia para ADMIN"
+        }
+    } catch {
+        Report-Fail "CP-12.2: Error al consultar /api/users como ADMIN: $_"
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-13: Proteccion de detalle de ticket para tecnico no asignado (E3)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-13] Proteccion de detalle de ticket para tecnico no asignado (E3)..." -ForegroundColor Yellow
+if ($userToken -and $techToken) {
+    try {
+        $headersUser = @{ Authorization = "Bearer $userToken"; "Content-Type" = "application/json" }
+        $unassignedTicket = Invoke-RestMethod -Uri "$backendUrl/api/tickets" -Method Post -Headers $headersUser -Body (@{
+            title = "Ticket no asignado a tecnico para test E3"
+            description = "Descripcion"
+            category = "SOFTWARE"
+            priority = "MEDIA"
+        } | ConvertTo-Json) -TimeoutSec 10
+        $unassignedId = $unassignedTicket.id
+
+        $headersTech = @{ Authorization = "Bearer $techToken" }
+        try {
+            $unauthRes = Invoke-WebRequest -Uri "$backendUrl/api/tickets/$unassignedId" -Method Get -Headers $headersTech -TimeoutSec 10 -ErrorAction Stop
+            Report-Fail "CP-13: El tecnico pudo acceder al detalle de un ticket no asignado (HTTP $($unauthRes.StatusCode))"
+        } catch {
+            $code = $_.Exception.Response.StatusCode.value__
+            if ($code -eq 403) {
+                Report-Pass "CP-13: Acceso rechazado con HTTP 403 para tecnico no asignado" "Proteccion E3 validada"
+            } else {
+                Report-Fail "CP-13: Codigo inesperado: $code (esperado 403)"
+            }
+        }
+    } catch {
+        Report-Fail "CP-13: Error al crear ticket de prueba para E3: $_"
+    }
+}
+
+# ------------------------------------------------------------------------------
+# CP-14: Politica de contrasenas robustas (F3)
+# ------------------------------------------------------------------------------
+Write-Host "`n[CP-14] Validacion de politica de contrasenas (F3)..." -ForegroundColor Yellow
+try {
+    $weakBody = @{
+        name = "Usuario Password Debil"
+        email = "debil_$timestamp@campusdesk.com"
+        password = "abc"
+    } | ConvertTo-Json
+    $weakRes = Invoke-WebRequest -Uri "$backendUrl/api/auth/register" -Method Post -Body $weakBody -ContentType "application/json" -TimeoutSec 10 -ErrorAction Stop
+    Report-Fail "CP-14: Se acepto contrasena debil sin cumplir la politica (HTTP $($weakRes.StatusCode))"
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -eq 400) {
+        Report-Pass "CP-14: Contrasena debil rechazada con HTTP 400 Bad Request" "Politica F3 validada"
+    } else {
+        Report-Fail "CP-14: Codigo inesperado: $code (esperado 400)"
+    }
+}
+
+# ------------------------------------------------------------------------------
+# Resumen Final de Certificacion
 # ------------------------------------------------------------------------------
 Write-Host "`n=================================================================" -ForegroundColor Cyan
-Write-Host "   RESUMEN FINAL DE CERTIFICACIÓN DE PRUEBAS CAMPUSDESK          " -ForegroundColor Cyan
+Write-Host "   RESUMEN FINAL DE CERTIFICACION DE PRUEBAS CAMPUSDESK          " -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host "  Pruebas Superadas (PASS): $passedCount" -ForegroundColor Green
 Write-Host "  Pruebas Fallidas  (FAIL): $failedCount" -ForegroundColor $(if ($failedCount -eq 0) { "Green" } else { "Red" })
 
 if ($failedCount -eq 0) {
-    Write-Host "`n  CERTIFICACIÓN EXITOSA: CAMPUSDESK cumple 100% de los requerimientos!" -ForegroundColor Green
+    Write-Host "`n  CERTIFICACION EXITOSA: CAMPUSDESK cumple 100% de los requerimientos!" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host "`n  ADVERTENCIA: Se detectaron fallos en la suite de certificación." -ForegroundColor Yellow
+    Write-Host "`n  ADVERTENCIA: Se detectaron fallos en la suite de certificacion." -ForegroundColor Yellow
     exit 1
 }

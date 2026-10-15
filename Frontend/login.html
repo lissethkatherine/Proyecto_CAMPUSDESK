@@ -11,7 +11,7 @@
   <!-- Contenedor principal de autenticación -->
   <main class="auth-wrapper">
     <div class="auth-card">
-      
+
       <!-- Logo y título estilo NEXO -->
       <header class="auth-header">
         <div class="auth-logo-box">
@@ -93,7 +93,7 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const BASE_URL = localStorage.getItem('api_url') 
+    const BASE_URL = localStorage.getItem('api_url')
       || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
     const API_URL = `${BASE_URL}/auth/login`;
 

@@ -1,13 +1,13 @@
 /**
  * CAMPUSDESK - Lógica de Frontend Vanilla JS (TechNova Solutions)
  * Arquitectura: HTML5 + CSS3 + Fetch API nativa. Sin frameworks externos.
- * Ciclo de vida de incidencias, máquina de estados, métricas, comentarios y auditoría.
+ * Ciclo de vida de incidencias, máquina de estados, métricas, comentarios, auditoría y administración.
  */
 'use strict';
 
 (function () {
   // 1. Configuración de API y URLs
-  const BASE_URL = localStorage.getItem('api_url') 
+  const BASE_URL = localStorage.getItem('api_url')
     || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
 
   // 2. Estado de la Aplicación
@@ -15,11 +15,14 @@
     currentUser: null,
     tickets: [],
     technicians: [],
+    users: [],
     activeTicket: null,
     activeFilterStatus: '',
     activeFilterPriority: '',
     activeFilterCategory: '',
-    searchQuery: ''
+    searchQuery: '',
+    userFilterRole: '',
+    userSearchQuery: ''
   };
 
   // 3. Utilidades y Helpers
@@ -105,6 +108,7 @@
 
     const roleBadge = document.getElementById('navUserRole');
     const emailSpan = document.getElementById('navUserEmail');
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
 
     if (roleBadge) {
       roleBadge.textContent = role;
@@ -112,6 +116,15 @@
     }
     if (emailSpan) {
       emailSpan.textContent = storedEmail || 'Usuario';
+    }
+
+    // F2: Habilitar botón de navegación a Administración solo para ADMIN
+    if (btnNavAdmin) {
+      if (role === 'ADMIN') {
+        btnNavAdmin.style.display = 'inline-flex';
+      } else {
+        btnNavAdmin.style.display = 'none';
+      }
     }
 
     try {
@@ -125,14 +138,20 @@
           roleBadge.textContent = user.role;
           roleBadge.className = `role-pill ${user.role.toLowerCase()}`;
         }
+        if (btnNavAdmin) {
+          btnNavAdmin.style.display = user.role === 'ADMIN' ? 'inline-flex' : 'none';
+        }
       }
     } catch (e) {
       console.warn('No se pudo refrescar el perfil desde el backend:', e);
     }
   }
 
-  // 5. Carga de Técnicos (para asignación por Administrador)
+  // 5. Carga de Técnicos (E4: Exclusivo para ADMIN para asignación de incidencias)
   async function loadTechnicians() {
+    if (AuthGuard.getRole() !== 'ADMIN') {
+      return;
+    }
     try {
       const resp = await apiFetch(`${BASE_URL}/api/users/technicians`);
       if (!resp) return;
@@ -144,6 +163,96 @@
     }
   }
 
+  // 5.1 Carga de Todos los Usuarios (F2: Exclusivo para ADMIN)
+  async function loadAdminUsers() {
+    if (AuthGuard.getRole() !== 'ADMIN') return;
+    const tbody = document.getElementById('usersTableBody');
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 30px; color: #64748B;">
+            Consultando usuarios registrados...
+          </td>
+        </tr>
+      `;
+    }
+
+    try {
+      const resp = await apiFetch(`${BASE_URL}/api/users`);
+      if (!resp || !resp.ok) {
+        if (tbody) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" style="text-align: center; padding: 30px; color: #E11D48;">
+                Error al cargar usuarios del servidor.
+              </td>
+            </tr>
+          `;
+        }
+        return;
+      }
+
+      AppState.users = await resp.json();
+      renderAdminUsersTable();
+    } catch (e) {
+      console.error('Error cargando usuarios:', e);
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="text-align: center; padding: 30px; color: #E11D48;">
+              Fallo de conexión al cargar usuarios.
+            </td>
+          </tr>
+        `;
+      }
+    }
+  }
+
+  function renderAdminUsersTable() {
+    const tbody = document.getElementById('usersTableBody');
+    if (!tbody) return;
+
+    const query = AppState.userSearchQuery.toLowerCase().trim();
+    const roleFilter = AppState.userFilterRole;
+
+    const filtered = AppState.users.filter(u => {
+      const matchesRole = !roleFilter || u.role === roleFilter;
+      const matchesQuery = !query ||
+        (u.name || '').toLowerCase().includes(query) ||
+        (u.email || '').toLowerCase().includes(query) ||
+        String(u.id).includes(query);
+      return matchesRole && matchesQuery;
+    });
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 35px; color: #64748B;">
+            No se encontraron usuarios coincidentes con el criterio de búsqueda.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(u => {
+      const roleClass = (u.role || 'USER').toLowerCase();
+      return `
+        <tr>
+          <td style="font-weight: 700; color: #475569;">#${u.id}</td>
+          <td style="font-weight: 600; color: #0F172A;">${escapeHtml(u.name)}</td>
+          <td style="color: #475569;">${escapeHtml(u.email)}</td>
+          <td><span class="role-pill ${roleClass}">${u.role}</span></td>
+          <td style="text-align: right; white-space: nowrap;">
+            <button class="btn-campus-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="window.CampusDesk.filterTicketsByUser('${escapeHtml(u.email)}')">
+              Ver Incidencias
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
   // 6. Carga de Métricas del Dashboard (RF-07)
   async function loadDashboardMetrics() {
     try {
@@ -151,12 +260,19 @@
       if (!resp || !resp.ok) return;
 
       const data = await resp.json();
-      document.getElementById('metricTotal').textContent = data.total ?? 0;
-      document.getElementById('metricAbiertas').textContent = data.abiertas ?? 0;
-      document.getElementById('metricAsignadas').textContent = data.asignadas ?? 0;
-      document.getElementById('metricEnProceso').textContent = data.enProceso ?? 0;
-      document.getElementById('metricResueltas').textContent = data.resueltas ?? 0;
-      document.getElementById('metricCerradas').textContent = data.cerradas ?? 0;
+      const mTotal = document.getElementById('metricTotal');
+      const mAbiertas = document.getElementById('metricAbiertas');
+      const mAsignadas = document.getElementById('metricAsignadas');
+      const mProceso = document.getElementById('metricEnProceso');
+      const mResueltas = document.getElementById('metricResueltas');
+      const mCerradas = document.getElementById('metricCerradas');
+
+      if (mTotal) mTotal.textContent = data.total ?? 0;
+      if (mAbiertas) mAbiertas.textContent = data.abiertas ?? 0;
+      if (mAsignadas) mAsignadas.textContent = data.asignadas ?? 0;
+      if (mProceso) mProceso.textContent = data.enProceso ?? 0;
+      if (mResueltas) mResueltas.textContent = data.resueltas ?? 0;
+      if (mCerradas) mCerradas.textContent = data.cerradas ?? 0;
     } catch (e) {
       console.error('Error cargando métricas:', e);
     }
@@ -165,6 +281,8 @@
   // 7. Carga y Filtrado de Incidencias (RF-03, RF-08)
   async function loadTickets() {
     const tbody = document.getElementById('ticketsTableBody');
+    if (!tbody) return;
+
     tbody.innerHTML = `
       <tr>
         <td colspan="9" style="text-align: center; padding: 30px; color: #64748B;">
@@ -210,6 +328,8 @@
 
   function renderTicketsTable() {
     const tbody = document.getElementById('ticketsTableBody');
+    if (!tbody) return;
+
     const query = AppState.searchQuery.toLowerCase().trim();
 
     const filtered = AppState.tickets.filter(t => {
@@ -217,7 +337,9 @@
       const titleMatch = (t.title || '').toLowerCase().includes(query);
       const descMatch = (t.description || '').toLowerCase().includes(query);
       const idMatch = String(t.id).includes(query);
-      return titleMatch || descMatch || idMatch;
+      const reqMatch = t.solicitante && (t.solicitante.name || t.solicitante.email || '').toLowerCase().includes(query);
+      const techMatch = t.tecnico && (t.tecnico.name || t.tecnico.email || '').toLowerCase().includes(query);
+      return titleMatch || descMatch || idMatch || reqMatch || techMatch;
     });
 
     if (filtered.length === 0) {
@@ -246,15 +368,21 @@
       const tecnico = t.tecnico ? escapeHtml(t.tecnico.name || t.tecnico.email) : '<span style="color: #94A3B8; font-style: italic;">Sin asignar</span>';
       const fecha = formatDate(t.createdAt);
 
-      // Acciones rápidas según rol y estado
+      // Acciones rápidas según rol y estado estricto
       let shortcutBtn = '';
-      if (currentRole === 'ADMIN' && status === 'ABIERTA') {
+
+      // F1: Solicitante puede editar si está ABIERTA y sin técnico asignado
+      const isRequester = t.solicitante && t.solicitante.email === currentEmail;
+      if (isRequester && status === 'ABIERTA' && !t.tecnico) {
+        shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; border-color: #3B82F6; color: #1D4ED8;" onclick="window.CampusDesk.openEditModal(${id})">Editar</button>`;
+      } else if (currentRole === 'ADMIN' && (status === 'ABIERTA' || status === 'ASIGNADA')) {
         shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px;" onclick="window.CampusDesk.openAssignQuick(${id})">Asignar</button>`;
       } else if (currentRole === 'TECHNICIAN' && status === 'ASIGNADA' && t.tecnico && t.tecnico.email === currentEmail) {
         shortcutBtn = `<button class="btn-campus-primary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'EN_PROCESO', 'Iniciando atención')">Atender</button>`;
       } else if (currentRole === 'TECHNICIAN' && status === 'EN_PROCESO' && t.tecnico && t.tecnico.email === currentEmail) {
         shortcutBtn = `<button class="btn-campus-primary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; background: #059669;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'RESUELTA', 'Incidencia resuelta')">Resolver</button>`;
-      } else if (status === 'RESUELTA' && (currentRole === 'ADMIN' || (t.solicitante && t.solicitante.email === currentEmail))) {
+      } else if (status === 'RESUELTA' && isRequester) {
+        // E2: Solo el solicitante puede cerrar la incidencia
         shortcutBtn = `<button class="btn-campus-secondary" style="padding: 4px 8px; font-size: 11.5px; margin-right: 6px; border-color: #065F46; color: #065F46;" onclick="window.CampusDesk.quickChangeStatus(${id}, 'CERRADA', 'Cierre confirmado')">Cerrar</button>`;
       }
 
@@ -281,49 +409,130 @@
     }).join('');
   }
 
-  // 8. Crear Nueva Incidencia (RF-03, CP-03)
-  async function handleCreateTicket(e) {
+  // 8. Crear / Editar Incidencia (RF-03, F1)
+  function openCreateModal() {
+    const form = document.getElementById('formCreateTicket');
+    if (form) form.reset();
+
+    const editIdInput = document.getElementById('editTicketId');
+    if (editIdInput) editIdInput.value = '';
+
+    const modalTitle = document.getElementById('modalCreateTicketTitle');
+    if (modalTitle) modalTitle.textContent = 'Crear Nueva Incidencia';
+
+    const statusInput = document.getElementById('newStatus');
+    if (statusInput) statusInput.value = 'ABIERTA';
+
+    const submitBtn = document.getElementById('btnSubmitCreate');
+    if (submitBtn) submitBtn.textContent = 'Guardar Incidencia';
+
+    openModal('modalCreateTicket');
+  }
+
+  async function openEditModal(ticketId) {
+    let ticket = AppState.tickets.find(t => t.id === ticketId);
+    if (!ticket || !ticket.description) {
+      try {
+        const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}`);
+        if (resp && resp.ok) {
+          ticket = await resp.json();
+        }
+      } catch (e) {
+        console.error('Error al obtener datos para edición:', e);
+      }
+    }
+
+    if (!ticket) {
+      showToast('No se pudo cargar la incidencia para edición', 'error');
+      return;
+    }
+
+    const editIdInput = document.getElementById('editTicketId');
+    if (editIdInput) editIdInput.value = ticket.id;
+
+    const modalTitle = document.getElementById('modalCreateTicketTitle');
+    if (modalTitle) modalTitle.textContent = `Editar Incidencia #${ticket.id}`;
+
+    const submitBtn = document.getElementById('btnSubmitCreate');
+    if (submitBtn) submitBtn.textContent = 'Actualizar Incidencia';
+
+    const titleInput = document.getElementById('newTitle');
+    const catInput = document.getElementById('newCategory');
+    const prioInput = document.getElementById('newPriority');
+    const statusInput = document.getElementById('newStatus');
+    const descInput = document.getElementById('newDescription');
+
+    if (titleInput) titleInput.value = ticket.title || '';
+    if (catInput) catInput.value = ticket.category || 'REDES';
+    if (prioInput) prioInput.value = ticket.priority || 'MEDIA';
+    if (statusInput) statusInput.value = ticket.status || 'ABIERTA';
+    if (descInput) descInput.value = ticket.description || '';
+
+    closeModal('modalDetailTicket');
+    openModal('modalCreateTicket');
+  }
+
+  async function handleCreateOrUpdateTicket(e) {
     e.preventDefault();
+    const editIdInput = document.getElementById('editTicketId');
+    const editId = editIdInput ? editIdInput.value : '';
+    const isEditing = Boolean(editId);
+
     const btnSubmit = document.getElementById('btnSubmitCreate');
-    btnSubmit.disabled = true;
-    btnSubmit.textContent = 'Guardando...';
+    if (btnSubmit) {
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = isEditing ? 'Actualizando...' : 'Guardando...';
+    }
 
     const payload = {
       title: document.getElementById('newTitle').value.trim(),
       category: document.getElementById('newCategory').value,
       priority: document.getElementById('newPriority').value,
+      status: (document.getElementById('newStatus') && document.getElementById('newStatus').value) || 'ABIERTA',
       description: document.getElementById('newDescription').value.trim()
     };
 
     try {
-      const resp = await apiFetch(`${BASE_URL}/api/tickets`, {
-        method: 'POST',
+      const url = isEditing ? `${BASE_URL}/api/tickets/${editId}` : `${BASE_URL}/api/tickets`;
+      const method = isEditing ? 'PUT' : 'POST';
+
+      const resp = await apiFetch(url, {
+        method: method,
         body: JSON.stringify(payload)
       });
       if (!resp) return;
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
-        const msg = (err && (err.message || err.error)) || 'Error al crear la incidencia';
+        const msg = (err && (err.message || err.error)) || (isEditing ? 'Error al actualizar la incidencia' : 'Error al crear la incidencia');
         showToast(msg, 'error');
         return;
       }
 
-      const created = await resp.json();
-      showToast(`Incidencia #${created.id} creada exitosamente`, 'success');
+      const savedTicket = await resp.json();
+      showToast(isEditing ? `Incidencia #${savedTicket.id} actualizada correctamente` : `Incidencia #${savedTicket.id} creada exitosamente`, 'success');
 
       closeModal('modalCreateTicket');
-      document.getElementById('formCreateTicket').reset();
+      const form = document.getElementById('formCreateTicket');
+      if (form) form.reset();
+      if (editIdInput) editIdInput.value = '';
 
       // Recargar tablero
       await loadDashboardMetrics();
       await loadTickets();
+
+      // Si se estaba visualizando el detalle, actualizarlo
+      if (isEditing && AppState.activeTicket && AppState.activeTicket.id === savedTicket.id) {
+        await openDetailModal(savedTicket.id);
+      }
     } catch (err) {
-      showToast('Error de red al crear incidencia', 'error');
+      showToast('Error de comunicación con el servidor', 'error');
       console.error(err);
     } finally {
-      btnSubmit.disabled = false;
-      btnSubmit.textContent = 'Guardar Incidencia';
+      if (btnSubmit) {
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = isEditing ? 'Actualizar Incidencia' : 'Guardar Incidencia';
+      }
     }
   }
 
@@ -333,7 +542,9 @@
       const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}`);
       if (!resp) return;
       if (!resp.ok) {
-        showToast('No se pudo cargar el detalle del ticket', 'error');
+        const err = await resp.json().catch(() => null);
+        const msg = (err && (err.message || err.error)) || 'No se pudo cargar el detalle del ticket';
+        showToast(msg, 'error');
         return;
       }
 
@@ -350,11 +561,11 @@
       document.getElementById('detailStatusBadge').innerHTML = statusBadge;
       document.getElementById('detailPriorityBadge').innerHTML = prioBadge;
 
-      const solicitante = ticket.solicitante 
-        ? `${escapeHtml(ticket.solicitante.name)} (${escapeHtml(ticket.solicitante.email)})` 
+      const solicitante = ticket.solicitante
+        ? `${escapeHtml(ticket.solicitante.name)} (${escapeHtml(ticket.solicitante.email)})`
         : '—';
-      const tecnico = ticket.tecnico 
-        ? `${escapeHtml(ticket.tecnico.name)} (${escapeHtml(ticket.tecnico.email)})` 
+      const tecnico = ticket.tecnico
+        ? `${escapeHtml(ticket.tecnico.name)} (${escapeHtml(ticket.tecnico.email)})`
         : '<span style="color: #94A3B8; font-style: italic;">Sin asignar</span>';
 
       document.getElementById('detailSolicitante').innerHTML = solicitante;
@@ -401,23 +612,68 @@
 
     let actionsHtml = '';
 
-    // 2. Acciones para ADMINISTRADOR (Asignar técnicos)
-    if (role === 'ADMIN') {
+    // Selector universal de cambio de estado desde vista de detalle (RF-04)
+    actionsHtml += `
+      <div class="action-box" style="background: #F8FAFC; border-color: #CBD5E1; margin-bottom: 14px;">
+        <div class="action-box-title" style="color: #1E293B; display: flex; align-items: center; justify-content: space-between;">
+          <span>🔄 Cambiar Estado de la Incidencia</span>
+          <span style="font-size: 11.5px; font-weight: normal; color: #64748B;">Estado actual: <strong>${ticket.status.replace('_', ' ')}</strong></span>
+        </div>
+        <p style="font-size: 12.5px; color: #64748B; margin-bottom: 10px;">
+          Seleccione el estado deseado. El cambio se procesará validando las reglas de negocio y permisos de su rol.
+        </p>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <select id="selectDetailNewStatus" style="flex: 1; min-width: 170px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13.5px; background: white;">
+            <option value="ABIERTA" ${ticket.status === 'ABIERTA' ? 'selected' : ''}>Abierta</option>
+            <option value="ASIGNADA" ${ticket.status === 'ASIGNADA' ? 'selected' : ''}>Asignada</option>
+            <option value="EN_PROCESO" ${ticket.status === 'EN_PROCESO' ? 'selected' : ''}>En Proceso</option>
+            <option value="RESUELTA" ${ticket.status === 'RESUELTA' ? 'selected' : ''}>Resuelta</option>
+            <option value="CERRADA" ${ticket.status === 'CERRADA' ? 'selected' : ''}>Cerrada</option>
+          </select>
+          <input type="text" id="detailStatusComment" placeholder="Comentario o justificación del cambio..." style="flex: 2; min-width: 200px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px;">
+          <button class="btn-campus-primary" style="padding: 9px 16px; font-size: 13.5px;" onclick="window.CampusDesk.changeStatusFromDetail(${ticket.id})">
+            Actualizar Estado
+          </button>
+        </div>
+      </div>
+    `;
+
+    // F1: Opción de Editar si el usuario es el solicitante o administrador
+    const isRequester = ticket.solicitante && ticket.solicitante.email === userEmail;
+    if ((isRequester && ticket.status === 'ABIERTA' && !ticket.tecnico) || role === 'ADMIN') {
+      actionsHtml += `
+        <div class="action-box" style="background: #F0FDF4; border-color: #BBF7D0; margin-bottom: 14px;">
+          <div class="action-box-title" style="color: #166534;">✏ Edición de Incidencia (F1)</div>
+          <p style="font-size: 13px; color: #15803D; margin-bottom: 12px;">
+            ${role === 'ADMIN' ? 'Como administrador, puedes modificar todos los datos de esta incidencia.' : 'La incidencia está abierta y aún no ha sido asignada a ningún técnico de soporte. Puedes modificar el título, categoría, prioridad, estado o descripción.'}
+          </p>
+          <button class="btn-campus-secondary" style="background: white; border-color: #16A34A; color: #15803D; font-weight: 600;" onclick="window.CampusDesk.openEditModal(${ticket.id})">
+            ✏ Editar Datos de la Incidencia
+          </button>
+        </div>
+      `;
+    }
+
+    // 2. Acciones para ADMINISTRADOR (Asignar o reasignar técnicos, solo en ABIERTA o ASIGNADA)
+    if (role === 'ADMIN' && (ticket.status === 'ABIERTA' || ticket.status === 'ASIGNADA')) {
       const techOptions = AppState.technicians.map(t => {
         const isSelected = ticket.tecnico && ticket.tecnico.id === t.id ? 'selected' : '';
         return `<option value="${t.id}" ${isSelected}>${escapeHtml(t.name)} (${escapeHtml(t.email)})</option>`;
       }).join('');
 
+      const actionTitle = ticket.status === 'ASIGNADA' ? 'Reasignación de Técnico' : 'Asignación de Técnico Responsable';
+      const actionBtnText = ticket.status === 'ASIGNADA' ? 'Reasignar Técnico' : 'Asignar Técnico';
+
       actionsHtml += `
         <div class="action-box">
-          <div class="action-box-title">⚙ Administración: Asignación de Técnico Responsable</div>
+          <div class="action-box-title">⚙ Administración: ${actionTitle}</div>
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <select id="selectAssignTech" style="flex: 1; min-width: 200px; padding: 9px; border: 1px solid #CBD5E1; border-radius: 6px;">
               <option value="">-- Seleccionar Técnico --</option>
               ${techOptions}
             </select>
             <button class="btn-campus-primary" style="padding: 9px 16px; font-size: 13.5px;" onclick="window.CampusDesk.assignTechnician(${ticket.id})">
-              Asignar Técnico
+              ${actionBtnText}
             </button>
           </div>
         </div>
@@ -425,14 +681,15 @@
     }
 
     // 3. Acciones para TÉCNICO ASIGNADO (Iniciar atención o Resolver)
+    // E2: Exclusivo para el técnico asignado (el administrador no debe saltarse las reglas de atención técnica)
     const isAssignedTech = ticket.tecnico && ticket.tecnico.email === userEmail;
-    if (role === 'ADMIN' || isAssignedTech) {
+    if (isAssignedTech) {
       if (ticket.status === 'ASIGNADA') {
         actionsHtml += `
           <div class="action-box" style="background: #EFF6FF; border-color: #BFDBFE;">
             <div class="action-box-title" style="color: #1E40AF;">▶ Gestión Técnica: Iniciar Atención</div>
             <p style="font-size: 13px; color: #3B82F6; margin-bottom: 12px;">
-              La incidencia se encuentra asignada. Presiona el botón para iniciar el diagnóstico técnico.
+              La incidencia se encuentra asignada a tu perfil. Presiona el botón para iniciar el diagnóstico técnico.
             </p>
             <button class="btn-campus-primary" style="background: #2563EB;" onclick="window.CampusDesk.updateStatus(${ticket.id}, 'EN_PROCESO', 'Técnico inicia atención e investigación')">
               Iniciar Atención (Pasar a EN PROCESO)
@@ -458,14 +715,14 @@
     }
 
     // 4. Acciones para USUARIO SOLICITANTE (Cerrar ticket resuelto)
-    const isRequester = ticket.solicitante && ticket.solicitante.email === userEmail;
-    if (role === 'ADMIN' || isRequester) {
+    // E2: Exclusivo para el solicitante
+    if (isRequester) {
       if (ticket.status === 'RESUELTA') {
         actionsHtml += `
           <div class="action-box" style="background: #F8FAFC; border-color: #CBD5E1;">
             <div class="action-box-title" style="color: #334155;">🔒 Conformidad y Cierre de Incidencia</div>
             <p style="font-size: 13px; color: #64748B; margin-bottom: 12px;">
-              El soporte técnico ha marcado el problema como RESUELTO. Si estás conforme, confirma el cierre definitivo.
+              El soporte técnico ha marcado el problema como RESUELTO. Si estás conforme con la solución brindada, confirma el cierre definitivo.
             </p>
             <button class="btn-campus-primary" style="background: #334155;" onclick="window.CampusDesk.updateStatus(${ticket.id}, 'CERRADA', 'Solicitante confirma conformidad y cierre definitivo')">
               Confirmar Conformidad y Cerrar Incidencia
@@ -477,7 +734,7 @@
 
     container.innerHTML = actionsHtml || `
       <div style="padding: 12px; background: #F8FAFC; border-radius: 6px; font-size: 13px; color: #64748B; text-align: center;">
-        No hay transiciones manuales pendientes para tu perfil en el estado actual (${ticket.status}).
+        No hay transiciones manuales pendientes para tu perfil en el estado actual (${ticket.status.replace('_', ' ')}).
       </div>
     `;
   }
@@ -533,7 +790,7 @@
         return;
       }
 
-      showToast(`Estado actualizado a ${newStatus}`, 'success');
+      showToast(`Estado actualizado a ${newStatus.replace('_', ' ')}`, 'success');
       await openDetailModal(ticketId);
       await loadDashboardMetrics();
       await loadTickets();
@@ -549,12 +806,31 @@
     updateStatus(ticketId, 'RESUELTA', comment);
   }
 
+  async function changeStatusFromDetail(ticketId) {
+    const select = document.getElementById('selectDetailNewStatus');
+    const commentInput = document.getElementById('detailStatusComment');
+    if (!select || !select.value) {
+      showToast('Por favor selecciona un estado de la lista', 'error');
+      return;
+    }
+
+    const newStatus = select.value;
+    if (AppState.activeTicket && AppState.activeTicket.status === newStatus) {
+      showToast(`La incidencia ya se encuentra en estado ${newStatus.replace('_', ' ')}`, 'info');
+      return;
+    }
+
+    const comment = (commentInput && commentInput.value.trim()) || `Cambio de estado a ${newStatus.replace('_', ' ')}`;
+    await updateStatus(ticketId, newStatus, comment);
+  }
+
   // 12. Hilo de Comentarios (RF-05)
   async function loadComments(ticketId) {
     const container = document.getElementById('commentsContainer');
     const countBadge = document.getElementById('detailCommentCount');
     const formContainer = document.getElementById('commentFormContainer');
 
+    if (!container) return;
     container.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando notas...</div>';
 
     try {
@@ -570,23 +846,25 @@
       if (countBadge) countBadge.textContent = comments.length;
 
       // Si ticket está CERRADO, deshabilitar formulario de comentarios
-      if (AppState.activeTicket && AppState.activeTicket.status === 'CERRADA') {
-        formContainer.innerHTML = `
-          <div class="closed-box" style="margin-top: 14px;">
-            <span>🔒</span> No se pueden registrar comentarios adicionales en un ticket CERRADO.
-          </div>
-        `;
-      } else {
-        formContainer.innerHTML = `
-          <form id="formAddComment" style="margin-top: 14px;" onsubmit="window.CampusDesk.handleAddComment(event, ${ticketId})">
-            <textarea id="commentContent" rows="3" required placeholder="Escriba una nota o actualización técnica sobre esta incidencia..." style="width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 6px; resize: vertical;"></textarea>
-            <div style="text-align: right; margin-top: 8px;">
-              <button type="submit" class="btn-campus-primary" style="padding: 8px 16px; font-size: 13.5px;" id="btnSubmitComment">
-                Agregar Comentario
-              </button>
+      if (formContainer) {
+        if (AppState.activeTicket && AppState.activeTicket.status === 'CERRADA') {
+          formContainer.innerHTML = `
+            <div class="closed-box" style="margin-top: 14px;">
+              <span>🔒</span> No se pueden registrar comentarios adicionales en un ticket CERRADO.
             </div>
-          </form>
-        `;
+          `;
+        } else {
+          formContainer.innerHTML = `
+            <form id="formAddComment" style="margin-top: 14px;" onsubmit="window.CampusDesk.handleAddComment(event, ${ticketId})">
+              <textarea id="commentContent" rows="3" required placeholder="Escriba una nota o actualización técnica sobre esta incidencia..." style="width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 6px; resize: vertical;"></textarea>
+              <div style="text-align: right; margin-top: 8px;">
+                <button type="submit" class="btn-campus-primary" style="padding: 8px 16px; font-size: 13.5px;" id="btnSubmitComment">
+                  Agregar Comentario
+                </button>
+              </div>
+            </form>
+          `;
+        }
       }
 
       if (comments.length === 0) {
@@ -627,8 +905,10 @@
 
     if (!content) return;
 
-    btn.disabled = true;
-    btn.textContent = 'Enviando...';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Enviando...';
+    }
 
     try {
       const resp = await apiFetch(`${BASE_URL}/api/tickets/${ticketId}/comments`, {
@@ -649,14 +929,17 @@
     } catch (err) {
       showToast('Error de red al agregar comentario', 'error');
     } finally {
-      btn.disabled = false;
-      btn.textContent = 'Agregar Comentario';
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Agregar Comentario';
+      }
     }
   }
 
   // 13. Trazabilidad y Auditoría (RF-06)
   async function loadHistory(ticketId) {
     const timeline = document.getElementById('historyTimeline');
+    if (!timeline) return;
     timeline.innerHTML = '<div style="color: #64748B; font-size: 13px;">Cargando historial de auditoría...</div>';
 
     try {
@@ -678,10 +961,10 @@
         const dateStr = formatDate(h.fechaCambio);
         const authorName = h.autor ? escapeHtml(h.autor.name || h.autor.email) : 'Sistema';
         const authorRole = h.autor ? h.autor.role : 'SYSTEM';
-        const oldState = h.estadoAnterior 
-          ? `<span class="badge badge-status-${h.estadoAnterior}" style="font-size: 10px;">${h.estadoAnterior}</span>` 
+        const oldState = h.estadoAnterior
+          ? `<span class="badge badge-status-${h.estadoAnterior}" style="font-size: 10px;">${h.estadoAnterior.replace('_', ' ')}</span>`
           : '<span style="color: #94A3B8; font-size: 11px;">INICIO</span>';
-        const newState = `<span class="badge badge-status-${h.estadoNuevo}" style="font-size: 10px;">${h.estadoNuevo}</span>`;
+        const newState = `<span class="badge badge-status-${h.estadoNuevo}" style="font-size: 10px;">${h.estadoNuevo.replace('_', ' ')}</span>`;
         const comment = escapeHtml(h.comentarioTransicion || 'Cambio de estado');
 
         return `
@@ -708,7 +991,7 @@
     }
   }
 
-  // 14. Modales y Pestañas
+  // 14. Modales, Navegación de Vistas y Pestañas
   function openModal(modalId) {
     const el = document.getElementById(modalId);
     if (el) el.classList.add('active');
@@ -728,94 +1011,210 @@
     });
   }
 
-  // 15. Vinculación de Eventos en el DOM
+  function switchMainView(viewName) {
+    const secHelpdesk = document.getElementById('sectionHelpdesk');
+    const secAdmin = document.getElementById('sectionAdmin');
+    const btnNavHelpdesk = document.getElementById('btnNavHelpdesk');
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
+
+    if (viewName === 'admin') {
+      if (AuthGuard.getRole() !== 'ADMIN') {
+        showToast('Acceso denegado: Solo administradores pueden ver esta sección', 'error');
+        return;
+      }
+      if (secHelpdesk) secHelpdesk.style.display = 'none';
+      if (secAdmin) secAdmin.style.display = 'block';
+      if (btnNavHelpdesk) btnNavHelpdesk.classList.remove('active-view-btn');
+      if (btnNavAdmin) btnNavAdmin.classList.add('active-view-btn');
+      loadAdminUsers();
+    } else {
+      if (secHelpdesk) secHelpdesk.style.display = 'block';
+      if (secAdmin) secAdmin.style.display = 'none';
+      if (btnNavHelpdesk) btnNavHelpdesk.classList.add('active-view-btn');
+      if (btnNavAdmin) btnNavAdmin.classList.remove('active-view-btn');
+      loadTickets();
+    }
+  }
+
+  // 15. Vinculación Integral de Eventos en el DOM (REPARACIÓN CRÍTICA)
   function setupEventListeners() {
     // Logout
-    document.getElementById('btnLogout').addEventListener('click', async () => {
-      await AuthGuard.logout();
-    });
+    const btnLogout = document.getElementById('btnLogout');
+    if (btnLogout) {
+      btnLogout.addEventListener('click', async () => {
+        await AuthGuard.logout();
+      });
+    }
 
     // Refresh
-    document.getElementById('btnRefresh').addEventListener('click', async () => {
-      await loadDashboardMetrics();
-      await loadTickets();
-      showToast('Tablero actualizado');
-    });
+    const btnRefresh = document.getElementById('btnRefresh');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', async () => {
+        await loadDashboardMetrics();
+        await loadTickets();
+        showToast('Tablero de incidencias actualizado');
+      });
+    }
 
-    // Modal Crear
-    document.getElementById('btnOpenCreateModal').addEventListener('click', () => {
-      openModal('modalCreateTicket');
-    });
-    document.getElementById('btnCloseCreateModal').addEventListener('click', () => {
-      closeModal('modalCreateTicket');
-    });
-    document.getElementById('btnCancelCreate').addEventListener('click', () => {
-      closeModal('modalCreateTicket');
-    });
-    document.getElementById('formCreateTicket').addEventListener('submit', handleCreateTicket);
+    // Navegación de Vistas (Helpdesk vs Administración)
+    const btnNavHelpdesk = document.getElementById('btnNavHelpdesk');
+    if (btnNavHelpdesk) {
+      btnNavHelpdesk.addEventListener('click', () => switchMainView('helpdesk'));
+    }
+
+    const btnNavAdmin = document.getElementById('btnNavAdmin');
+    if (btnNavAdmin) {
+      btnNavAdmin.addEventListener('click', () => switchMainView('admin'));
+    }
+
+    // Eventos de la Vista de Administración
+    const btnRefreshAdminUsers = document.getElementById('btnRefreshAdminUsers');
+    if (btnRefreshAdminUsers) {
+      btnRefreshAdminUsers.addEventListener('click', async () => {
+        await loadAdminUsers();
+        showToast('Lista de usuarios actualizada');
+      });
+    }
+
+    const searchUserInput = document.getElementById('searchUserInput');
+    if (searchUserInput) {
+      searchUserInput.addEventListener('input', e => {
+        AppState.userSearchQuery = e.target.value;
+        renderAdminUsersTable();
+      });
+    }
+
+    const filterUserRole = document.getElementById('filterUserRole');
+    if (filterUserRole) {
+      filterUserRole.addEventListener('change', e => {
+        AppState.userFilterRole = e.target.value;
+        renderAdminUsersTable();
+      });
+    }
+
+    const btnResetUserFilters = document.getElementById('btnResetUserFilters');
+    if (btnResetUserFilters) {
+      btnResetUserFilters.addEventListener('click', () => {
+        AppState.userSearchQuery = '';
+        AppState.userFilterRole = '';
+        if (searchUserInput) searchUserInput.value = '';
+        if (filterUserRole) filterUserRole.value = '';
+        renderAdminUsersTable();
+      });
+    }
+
+    // Modal Crear / Editar
+    const btnOpenCreateModal = document.getElementById('btnOpenCreateModal');
+    if (btnOpenCreateModal) {
+      btnOpenCreateModal.addEventListener('click', openCreateModal);
+    }
+
+    const btnCloseCreateModal = document.getElementById('btnCloseCreateModal');
+    if (btnCloseCreateModal) {
+      btnCloseCreateModal.addEventListener('click', () => {
+        closeModal('modalCreateTicket');
+      });
+    }
+
+    const btnCancelCreate = document.getElementById('btnCancelCreate');
+    if (btnCancelCreate) {
+      btnCancelCreate.addEventListener('click', () => {
+        closeModal('modalCreateTicket');
+      });
+    }
+
+    const formCreateTicket = document.getElementById('formCreateTicket');
+    if (formCreateTicket) {
+      formCreateTicket.addEventListener('submit', handleCreateOrUpdateTicket);
+    }
 
     // Modal Detalle
-    document.getElementById('btnCloseDetailModal').addEventListener('click', () => {
-      closeModal('modalDetailTicket');
-    });
-    document.getElementById('btnExitDetail').addEventListener('click', () => {
-      closeModal('modalDetailTicket');
-    });
+    const btnCloseDetailModal = document.getElementById('btnCloseDetailModal');
+    if (btnCloseDetailModal) {
+      btnCloseDetailModal.addEventListener('click', () => {
+        closeModal('modalDetailTicket');
+      });
+    }
+
+    const btnExitDetail = document.getElementById('btnExitDetail');
+    if (btnExitDetail) {
+      btnExitDetail.addEventListener('click', () => {
+        closeModal('modalDetailTicket');
+      });
+    }
 
     // Pestañas del Modal
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        switchTab(btn.getAttribute('data-tab'));
+        const tabTarget = btn.getAttribute('data-tab');
+        if (tabTarget) {
+          switchTab(tabTarget);
+        }
       });
     });
 
-    // Filtros de tabla
-    document.getElementById('filterStatus').addEventListener('change', e => {
-      AppState.activeFilterStatus = e.target.value;
-      updateActiveCard();
-      loadTickets();
-    });
+    // Filtros de tabla de incidencias
+    const filterStatus = document.getElementById('filterStatus');
+    if (filterStatus) {
+      filterStatus.addEventListener('change', e => {
+        AppState.activeFilterStatus = e.target.value;
+        updateActiveCard();
+        loadTickets();
+      });
+    }
 
-    document.getElementById('filterPriority').addEventListener('change', e => {
-      AppState.activeFilterPriority = e.target.value;
-      loadTickets();
-    });
+    const filterPriority = document.getElementById('filterPriority');
+    if (filterPriority) {
+      filterPriority.addEventListener('change', e => {
+        AppState.activeFilterPriority = e.target.value;
+        loadTickets();
+      });
+    }
 
-    document.getElementById('filterCategory').addEventListener('change', e => {
-      AppState.activeFilterCategory = e.target.value;
-      loadTickets();
-    });
+    const filterCategory = document.getElementById('filterCategory');
+    if (filterCategory) {
+      filterCategory.addEventListener('change', e => {
+        AppState.activeFilterCategory = e.target.value;
+        loadTickets();
+      });
+    }
 
-    document.getElementById('searchInput').addEventListener('input', e => {
-      AppState.searchQuery = e.target.value;
-      renderTicketsTable();
-    });
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.addEventListener('input', e => {
+        AppState.searchQuery = e.target.value;
+        renderTicketsTable();
+      });
+    }
 
-    document.getElementById('btnResetFilters').addEventListener('click', () => {
-      AppState.activeFilterStatus = '';
-      AppState.activeFilterPriority = '';
-      AppState.activeFilterCategory = '';
-      AppState.searchQuery = '';
-      document.getElementById('filterStatus').value = '';
-      document.getElementById('filterPriority').value = '';
-      document.getElementById('filterCategory').value = '';
-      document.getElementById('searchInput').value = '';
-      updateActiveCard();
-      loadTickets();
-    });
+    const btnResetFilters = document.getElementById('btnResetFilters');
+    if (btnResetFilters) {
+      btnResetFilters.addEventListener('click', () => {
+        AppState.activeFilterStatus = '';
+        AppState.activeFilterPriority = '';
+        AppState.activeFilterCategory = '';
+        AppState.searchQuery = '';
+        if (filterStatus) filterStatus.value = '';
+        if (filterPriority) filterPriority.value = '';
+        if (filterCategory) filterCategory.value = '';
+        if (searchInput) searchInput.value = '';
+        updateActiveCard();
+        loadTickets();
+      });
+    }
 
     // Click en Tarjetas de Métricas para filtrar
     document.querySelectorAll('.metric-card').forEach(card => {
       card.addEventListener('click', () => {
-        const filterVal = card.getAttribute('data-filter');
+        const filterVal = card.getAttribute('data-filter') || '';
         AppState.activeFilterStatus = filterVal;
-        document.getElementById('filterStatus').value = filterVal;
+        if (filterStatus) filterStatus.value = filterVal;
         updateActiveCard();
         loadTickets();
       });
     });
 
-    // Cerrar modal al presionar Escape o fondo
+    // Cerrar modal al presionar Escape
     window.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         closeModal('modalCreateTicket');
@@ -823,6 +1222,7 @@
       }
     });
 
+    // Cerrar modal al hacer clic en el backdrop / overlay
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
       overlay.addEventListener('click', e => {
         if (e.target === overlay) {
@@ -846,6 +1246,9 @@
   // 16. Exposición Global para Acciones Directas en la Tabla
   window.CampusDesk = {
     openDetailModal: openDetailModal,
+    openCreateModal: openCreateModal,
+    openEditModal: openEditModal,
+    changeStatusFromDetail: changeStatusFromDetail,
     openAssignQuick: function(ticketId) {
       openDetailModal(ticketId);
     },
@@ -855,15 +1258,34 @@
     assignTechnician: assignTechnician,
     updateStatus: updateStatus,
     resolveTicket: resolveTicket,
-    handleAddComment: handleAddComment
+    handleAddComment: handleAddComment,
+    switchMainView: switchMainView,
+    filterTicketsByUser: function(userEmail) {
+      switchMainView('helpdesk');
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) {
+        searchInput.value = userEmail;
+        AppState.searchQuery = userEmail;
+        renderTicketsTable();
+      }
+    }
   };
 
-  // 17. Inicialización Principal al cargar la página
-  document.addEventListener('DOMContentLoaded', async () => {
+  // 17. Inicialización Principal Robusta
+  async function initApp() {
+    setupEventListeners();
     await initUserProfile();
-    await loadTechnicians();
+    if (AuthGuard.getRole() === 'ADMIN') {
+      await loadTechnicians();
+    }
     await loadDashboardMetrics();
     await loadTickets();
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
 
 })();

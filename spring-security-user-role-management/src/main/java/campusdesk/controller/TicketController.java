@@ -5,6 +5,7 @@ import campusdesk.dto.ChangeStatusDTO;
 import campusdesk.dto.CreateTicketDTO;
 import campusdesk.dto.HistoryResponseDTO;
 import campusdesk.dto.TicketResponseDTO;
+import campusdesk.dto.UpdateTicketDTO;
 import campusdesk.entity.TicketCategory;
 import campusdesk.entity.TicketPriority;
 import campusdesk.entity.TicketStatus;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -87,6 +89,20 @@ public class TicketController {
         TicketResponseDTO ticket = ticketService.getTicketById(id, principal.getName());
         return ResponseEntity.ok(ticket);
     }
+
+    @Operation(summary = "Editar una incidencia existente", description = "Permite al solicitante modificar una incidencia en estado ABIERTA sin técnico asignado (F1)")
+    @PutMapping("/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<TicketResponseDTO> updateTicket(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateTicketDTO dto,
+            Principal principal
+    ) {
+        log.info("Editando ticket #{} por solicitante [{}]", id, principal.getName());
+        TicketResponseDTO response = ticketService.updateTicket(id, dto, principal.getName());
+        return ResponseEntity.ok(response);
+    }
+
 
     @Operation(summary = "Asignar técnico a incidencia", description = "Exclusivo para ADMIN. Transiciona el ticket a ASIGNADA")
     @PatchMapping("/{id}/assign")

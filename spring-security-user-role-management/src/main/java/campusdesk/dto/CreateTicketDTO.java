@@ -2,6 +2,7 @@ package campusdesk.dto;
 
 import campusdesk.entity.TicketCategory;
 import campusdesk.entity.TicketPriority;
+import campusdesk.entity.TicketStatus;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -31,4 +32,6 @@ public class CreateTicketDTO {
 
     @NotNull(message = "La categoría es obligatoria (HARDWARE, SOFTWARE, REDES, ACCESOS, OTROS)")
     private TicketCategory category;
+
+    private TicketStatus status;
 }

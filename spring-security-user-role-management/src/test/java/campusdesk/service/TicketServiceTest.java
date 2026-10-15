@@ -240,4 +240,249 @@ class TicketServiceTest {
         assertThrows(UnauthorizedTicketActionException.class, () ->
                 ticketService.getTicketById(10L, otherUser.getEmail()));
     }
+
+    // =========================================================================
+    // CASOS DE PRUEBA ADICIONALES (AUDITORÍA & ENTREGA: E1, E2, E3, F1)
+    // =========================================================================
+
+    @Test
+    @DisplayName("E1: Reasignar un ticket EN_PROCESO devuelve 409 (InvalidStateTransitionException)")
+    void testReassignEnProcesoThrowsConflict() {
+        ticketAbierta.setStatus(TicketStatus.EN_PROCESO);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(InvalidStateTransitionException.class, () ->
+                ticketService.assignTechnician(10L, technician.getId(), admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E1: Reasignar un ticket RESUELTA devuelve 409 (InvalidStateTransitionException)")
+    void testReassignResueltaThrowsConflict() {
+        ticketAbierta.setStatus(TicketStatus.RESUELTA);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(InvalidStateTransitionException.class, () ->
+                ticketService.assignTechnician(10L, technician.getId(), admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E1: Reasignar un ticket CERRADA devuelve 409 (TicketClosedException)")
+    void testReassignCerradaThrowsConflict() {
+        ticketAbierta.setStatus(TicketStatus.CERRADA);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(TicketClosedException.class, () ->
+                ticketService.assignTechnician(10L, technician.getId(), admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E1: Reasignar un ticket ASIGNADA a otro técnico es válido y se registra en auditoría")
+    void testReassignAsignadaSuccess() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        User secondTech = User.builder().id(5L).email("tech2@campusdesk.com").name("Carlos Tech").role(Role.TECHNICIAN).build();
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(secondTech));
+        when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TicketResponseDTO response = ticketService.assignTechnician(10L, 5L, admin.getEmail());
+
+        assertNotNull(response);
+        assertEquals(TicketStatus.ASIGNADA, response.getStatus());
+        assertEquals(5L, response.getTecnico().getId());
+        verify(ticketHistoryRepository, times(1)).save(any(TicketHistory.class));
+    }
+
+    @Test
+    @DisplayName("E2: Administrador no puede saltarse las reglas de cambio de estado a EN_PROCESO")
+    void testAdminCannotBypassToEnProceso() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(UnauthorizedTicketActionException.class, () ->
+                ticketService.updateStatus(10L, TicketStatus.EN_PROCESO, "Admin intentando iniciar", admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E2: Administrador no puede saltarse las reglas de cambio de estado a RESUELTA")
+    void testAdminCannotBypassToResuelta() {
+        ticketAbierta.setStatus(TicketStatus.EN_PROCESO);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(UnauthorizedTicketActionException.class, () ->
+                ticketService.updateStatus(10L, TicketStatus.RESUELTA, "Admin intentando resolver", admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E2: Administrador no puede saltarse las reglas de cambio de estado a CERRADA")
+    void testAdminCannotBypassToCerrada() {
+        ticketAbierta.setStatus(TicketStatus.RESUELTA);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(UnauthorizedTicketActionException.class, () ->
+                ticketService.updateStatus(10L, TicketStatus.CERRADA, "Admin intentando cerrar", admin.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E2: Intentar transicionar al mismo estado devuelve 409 (InvalidStateTransitionException)")
+    void testTransitionToSameStateFails() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+
+        when(userRepository.findByEmail(requester.getEmail())).thenReturn(Optional.of(requester));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(InvalidStateTransitionException.class, () ->
+                ticketService.updateStatus(10L, TicketStatus.ASIGNADA, "Mismo estado", requester.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E3: Un técnico no puede consultar una incidencia que no tiene asignada (403)")
+    void testTechnicianCannotViewUnassignedTicket() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        User otherTech = User.builder().id(9L).email("othertech@campusdesk.com").role(Role.TECHNICIAN).build();
+        when(userRepository.findByEmail(otherTech.getEmail())).thenReturn(Optional.of(otherTech));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(UnauthorizedTicketActionException.class, () ->
+                ticketService.getTicketById(10L, otherTech.getEmail()));
+    }
+
+    @Test
+    @DisplayName("E3: Un técnico asignado sí puede consultar su incidencia (200)")
+    void testTechnicianCanViewAssignedTicket() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        when(userRepository.findByEmail(technician.getEmail())).thenReturn(Optional.of(technician));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        TicketResponseDTO result = ticketService.getTicketById(10L, technician.getEmail());
+        assertNotNull(result);
+        assertEquals(10L, result.getId());
+    }
+
+    @Test
+    @DisplayName("F1: Solicitante puede editar su incidencia ABIERTA sin técnico asignado")
+    void testUserCanEditOwnOpenUnassignedTicket() {
+        campusdesk.dto.UpdateTicketDTO dto = campusdesk.dto.UpdateTicketDTO.builder()
+                .title("Título Editado")
+                .description("Descripción modificada con mayor detalle")
+                .priority(TicketPriority.CRITICA)
+                .category(TicketCategory.SOFTWARE)
+                .build();
+
+        when(userRepository.findByEmail(requester.getEmail())).thenReturn(Optional.of(requester));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+        when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TicketResponseDTO response = ticketService.updateTicket(10L, dto, requester.getEmail());
+
+        assertNotNull(response);
+        assertEquals("Título Editado", response.getTitle());
+        assertEquals(TicketPriority.CRITICA, response.getPriority());
+        assertEquals(TicketCategory.SOFTWARE, response.getCategory());
+        verify(ticketHistoryRepository, times(1)).save(any(TicketHistory.class));
+    }
+
+    @Test
+    @DisplayName("F1: Otro usuario no puede editar la incidencia del solicitante (403)")
+    void testOtherUserCannotEditTicket() {
+        campusdesk.dto.UpdateTicketDTO dto = campusdesk.dto.UpdateTicketDTO.builder()
+                .title("Intento de Hack")
+                .description("Intruso modificando")
+                .priority(TicketPriority.BAJA)
+                .category(TicketCategory.OTROS)
+                .build();
+
+        when(userRepository.findByEmail(otherUser.getEmail())).thenReturn(Optional.of(otherUser));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(UnauthorizedTicketActionException.class, () ->
+                ticketService.updateTicket(10L, dto, otherUser.getEmail()));
+    }
+
+    @Test
+    @DisplayName("F1: No se puede editar una incidencia que ya tiene técnico asignado (409)")
+    void testCannotEditAssignedTicket() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        campusdesk.dto.UpdateTicketDTO dto = campusdesk.dto.UpdateTicketDTO.builder()
+                .title("Título Editado")
+                .description("Modificación tardía")
+                .priority(TicketPriority.MEDIA)
+                .category(TicketCategory.REDES)
+                .build();
+
+        when(userRepository.findByEmail(requester.getEmail())).thenReturn(Optional.of(requester));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(InvalidStateTransitionException.class, () ->
+                ticketService.updateTicket(10L, dto, requester.getEmail()));
+    }
+
+    @Test
+    @DisplayName("F1: Administrador puede editar una incidencia existente")
+    void testAdminCanEditTicket() {
+        ticketAbierta.setStatus(TicketStatus.ASIGNADA);
+        ticketAbierta.setTecnico(technician);
+
+        campusdesk.dto.UpdateTicketDTO dto = campusdesk.dto.UpdateTicketDTO.builder()
+                .title("Título Editado por Admin")
+                .description("Descripción modificada por el administrador")
+                .priority(TicketPriority.ALTA)
+                .category(TicketCategory.HARDWARE)
+                .build();
+
+        when(userRepository.findByEmail(admin.getEmail())).thenReturn(Optional.of(admin));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+        when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        TicketResponseDTO response = ticketService.updateTicket(10L, dto, admin.getEmail());
+
+        assertNotNull(response);
+        assertEquals("Título Editado por Admin", response.getTitle());
+        verify(ticketHistoryRepository, times(1)).save(any(TicketHistory.class));
+    }
+
+    @Test
+    @DisplayName("F1: Actualizar incidencia con transición inválida de estado es rechazada")
+    void testUpdateTicketInvalidStatusTransition() {
+        campusdesk.dto.UpdateTicketDTO dto = campusdesk.dto.UpdateTicketDTO.builder()
+                .title("Intento de Salto de Estado")
+                .description("Intentando pasar a CERRADA directo")
+                .priority(TicketPriority.MEDIA)
+                .category(TicketCategory.REDES)
+                .status(TicketStatus.CERRADA)
+                .build();
+
+        when(userRepository.findByEmail(requester.getEmail())).thenReturn(Optional.of(requester));
+        when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticketAbierta));
+
+        assertThrows(InvalidStateTransitionException.class, () ->
+                ticketService.updateTicket(10L, dto, requester.getEmail()));
+    }
 }

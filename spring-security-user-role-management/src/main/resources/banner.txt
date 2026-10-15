@@ -14,4 +14,3 @@
 
   Spring Boot ${spring-boot.version} | Java ${java.version}
   Perfil: ${spring.profiles.active}
-

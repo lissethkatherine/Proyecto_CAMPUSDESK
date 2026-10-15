@@ -22,7 +22,7 @@ public class OpenApiConfig {
         return new OpenAPI()
                 .info(new Info()
                         .title("CAMPUSDESK REST API - TechNova Solutions")
-                        .description("Plataforma de soporte y gestión de incidencias con Spring Boot 3, Spring Security 6, Redis 7 y PostgreSQL 16.")
+                        .description("Plataforma de soporte y gestión de incidencias con Java 21, Spring Boot 4, Spring Security, Redis 7 y PostgreSQL 16.")
                         .version("1.0.0")
                         .contact(new Contact()
                                 .name("TechNova Solutions Support")

@@ -1,6 +1,6 @@
 /**
  * CAMPUSDESK - Guardián de Autenticación (auth-guard.js)
- * 
+ *
  * Incluye este archivo en la cabecera o al inicio de las páginas protegidas
  * (por ejemplo dashboard.html, tickets.html) mediante:
  * <script src="auth-guard.js"></script>
@@ -55,7 +55,7 @@
      */
     logout: async function () {
       const token = this.getToken();
-      const baseUrl = localStorage.getItem('api_url') 
+      const baseUrl = localStorage.getItem('api_url')
         || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
 
       if (token) {

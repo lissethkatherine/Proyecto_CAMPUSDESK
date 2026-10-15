@@ -49,7 +49,7 @@
                 <p style="text-transform: uppercase; font-size: 0.8rem; letter-spacing: 2px; opacity: 0.8; margin-bottom: 1rem;">Tu soporte, en un solo lugar</p>
                 <h1 style="font-size: 3rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem;">Tu soporte,<br>bajo control.</h1>
                 <p style="font-size: 1.1rem; opacity: 0.7; line-height: 1.6;">Reportes, incidencias y soluciones. Una plataforma sencilla para el soporte técnico de tu campus.</p>
-                
+
                 <div style="display: flex; gap: 10px; margin-top: 2rem;">
                     <span style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-size: 0.85rem;">01 Reporta</span>
                     <span style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-size: 0.85rem;">02 Asigna</span>
@@ -88,15 +88,15 @@
                     <button type="submit" class="btn-primario" style="padding: 14px; border-radius: 6px; font-size: 1rem; font-weight: bold; display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 1rem;">
                         Iniciar Sesión <span>→</span>
                     </button>
-                    
+
                     <p style="text-align: center; font-size: 0.9rem; color: #666; margin-top: 1rem;">
                         ¿No tienes cuenta? <a href="registro.html" style="color: #10B981; font-weight: bold; text-decoration: none;">Regístrate aquí</a>
                     </p>
                 </form>
-                
+
                 <div id="mensajeError" style="color: red; font-size: 0.9rem; margin-top: 1rem; text-align: center; display: none;"></div>
             </div>
-            
+
             <div style="text-align: center; font-size: 0.8rem; color: #aaa; margin-top: 4rem;">
                 El acceso depende de los permisos de tu cuenta.
             </div>
@@ -105,7 +105,7 @@
 
     <!-- Script de autenticación -->
     <script>
-        const storedApiUrl = localStorage.getItem('api_url') 
+        const storedApiUrl = localStorage.getItem('api_url')
             || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
         const apiUrlInput = document.getElementById('apiUrl');
         if (apiUrlInput) apiUrlInput.value = storedApiUrl;
@@ -143,7 +143,7 @@
             const password = document.getElementById('password').value;
             const baseUrl = (document.getElementById('apiUrl').value || storedApiUrl).trim();
             const errorDiv = document.getElementById('mensajeError');
-            
+
             errorDiv.style.display = 'none';
 
             try {
@@ -162,11 +162,11 @@
                     sessionStorage.setItem('user_role', role);
                     sessionStorage.setItem('userEmail', email);
                     sessionStorage.setItem('user_email', email);
-                    
+
                     // Almacenar URL de la API para que las demás páginas la usen
                     localStorage.setItem('api_url', baseUrl);
                     localStorage.setItem('nexo.base', baseUrl);
-                    
+
                     window.location.href = 'dashboard.html'; // Redirige al Dashboard
                 } else {
                     const errData = await response.json().catch(() => null);

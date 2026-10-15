@@ -85,7 +85,9 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-CampusDesk_Redis_Pass_2026!}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5506,http://localhost:5500}
     ports:
+
       # Puerto host alternativo configurable para evitar colisión con el 8080/8050
       - "${BACKEND_PORT:-8056}:${BACKEND_INTERNAL_PORT:-8056}"
     networks:

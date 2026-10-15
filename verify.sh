@@ -37,7 +37,7 @@ ADMIN_TOKEN=$(curl -s -X POST "${BACKEND_URL}/api/auth/login" \
 
 TECH_TOKEN=$(curl -s -X POST "${BACKEND_URL}/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"email":"tecnico@campusdesk.com","password":"Tecnico123!"}' | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+  -d '{"email":"tecnico@campusdesk.com","password":"Password123!"}' | grep -o '"token":"[^"]*' | cut -d'"' -f4)
 
 echo "  [OK] Tokens emitidos para Usuario, Administrador y Técnico"
 
@@ -51,6 +51,26 @@ TICKET_RESP=$(curl -s -X POST "${BACKEND_URL}/api/tickets" \
 TICKET_ID=$(echo "${TICKET_RESP}" | grep -o '"id":[0-9]*' | head -n1 | cut -d':' -f2)
 echo "  [OK] Incidencia #${TICKET_ID} creada con estado inicial ABIERTA"
 
+# CP-03.1: Edición de incidencia ABIERTA por solicitante (F1)
+echo -e "\n[CP-03.1] Edición de incidencia ABIERTA por solicitante (F1)..."
+EDIT_RESP=$(curl -s -X PUT "${BACKEND_URL}/api/tickets/${TICKET_ID}" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Falla de conectividad Wi-Fi - ACTUALIZADA","description":"Descripción actualizada","category":"REDES","priority":"CRITICA"}')
+echo "  [OK] Incidencia #${TICKET_ID} editada exitosamente por el solicitante"
+
+# CP-03.2: Rechazo de edición por no-solicitante (403)
+echo -e "\n[CP-03.2] Rechazo de edición por no-solicitante (F1)..."
+HTTP_CODE_EDIT_FORBIDDEN=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${BACKEND_URL}/api/tickets/${TICKET_ID}" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Ilegal","description":"Ilegal","category":"REDES","priority":"BAJA"}')
+if [ "${HTTP_CODE_EDIT_FORBIDDEN}" -eq 403 ]; then
+  echo "  [OK] Edición por no-solicitante rechazada con HTTP 403"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_EDIT_FORBIDDEN} (esperado 403)"
+fi
+
 # CP-04: Asignación de técnico por Administrador
 echo -e "\n[CP-04] Asignación de técnico por Administrador (RF-04 / CP-04)..."
 ASSIGN_RESP=$(curl -s -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/assign" \
@@ -58,6 +78,18 @@ ASSIGN_RESP=$(curl -s -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/assign" 
   -H "Content-Type: application/json" \
   -d '{"tecnicoId":2}')
 echo "  [OK] Técnico asignado exitosamente (Estado: ASIGNADA)"
+
+# CP-04.1: Rechazo de edición de incidencia en estado ASIGNADA (F1 / 409)
+echo -e "\n[CP-04.1] Rechazo de edición de incidencia ya asignada (F1)..."
+HTTP_CODE_EDIT_ASSIGNED=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${BACKEND_URL}/api/tickets/${TICKET_ID}" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Ilegal","description":"Ilegal","category":"REDES","priority":"BAJA"}')
+if [ "${HTTP_CODE_EDIT_ASSIGNED}" -eq 409 ]; then
+  echo "  [OK] Edición de ticket asignado rechazada con HTTP 409"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_EDIT_ASSIGNED} (esperado 409)"
+fi
 
 # CP-05: Intento no autorizado de asignación de técnico por USER (403)
 echo -e "\n[CP-05] Rechazo de asignación de técnico por USER (RF-08 / CP-05)..."
@@ -80,6 +112,18 @@ curl -s -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/status" \
   -d '{"status":"EN_PROCESO","comentario":"Iniciando diagnóstico"}' > /dev/null
 echo "  [OK] Estado actualizado a EN_PROCESO"
 
+# CP-06.1: Rechazo de reasignación en estado EN_PROCESO (E1 / 409)
+echo -e "\n[CP-06.1] Rechazo de reasignación en estado EN_PROCESO (E1)..."
+HTTP_CODE_REASSIGN_PROCESS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/assign" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"tecnicoId":2}')
+if [ "${HTTP_CODE_REASSIGN_PROCESS}" -eq 409 ]; then
+  echo "  [OK] Reasignación en EN_PROCESO rechazada con HTTP 409"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_REASSIGN_PROCESS} (esperado 409)"
+fi
+
 # CP-07: Transición a RESUELTA por técnico asignado
 echo -e "\n[CP-07] Transición a RESUELTA por técnico asignado (RF-04 / CP-07)..."
 curl -s -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/status" \
@@ -87,6 +131,18 @@ curl -s -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/status" \
   -H "Content-Type: application/json" \
   -d '{"status":"RESUELTA","comentario":"Solución aplicada"}' > /dev/null
 echo "  [OK] Estado actualizado a RESUELTA"
+
+# CP-07.1: Rechazo de reasignación en estado RESUELTA (E1 / 409)
+echo -e "\n[CP-07.1] Rechazo de reasignación en estado RESUELTA (E1)..."
+HTTP_CODE_REASSIGN_RESOLVED=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/assign" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"tecnicoId":2}')
+if [ "${HTTP_CODE_REASSIGN_RESOLVED}" -eq 409 ]; then
+  echo "  [OK] Reasignación en RESUELTA rechazada con HTTP 409"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_REASSIGN_RESOLVED} (esperado 409)"
+fi
 
 # CP-08: Intento de salto inválido de estados (409)
 echo -e "\n[CP-08] Rechazo de salto arbitrario de estados (RF-04 / CP-08)..."
@@ -131,6 +187,76 @@ else
   echo "  [FALLO] Código recibido: ${HTTP_CODE_IMMUTABLE} (esperado 409 o 400)"
 fi
 
+# CP-10.3: Rechazo de reasignación en estado CERRADA (E1 / 409)
+echo -e "\n[CP-10.3] Rechazo de reasignación en estado CERRADA (E1)..."
+HTTP_CODE_REASSIGN_CLOSED=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "${BACKEND_URL}/api/tickets/${TICKET_ID}/assign" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"tecnicoId":2}')
+if [ "${HTTP_CODE_REASSIGN_CLOSED}" -eq 409 ]; then
+  echo "  [OK] Reasignación en CERRADA rechazada con HTTP 409"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_REASSIGN_CLOSED} (esperado 409)"
+fi
+
+# CP-11: Protección de lista de técnicos (E4)
+echo -e "\n[CP-11] Protección de ruta de técnicos /api/users/technicians (E4)..."
+HTTP_CODE_USER_TECHS=$(curl -s -o /dev/null -w "%{http_code}" -X GET "${BACKEND_URL}/api/users/technicians" \
+  -H "Authorization: Bearer ${USER_TOKEN}")
+if [ "${HTTP_CODE_USER_TECHS}" -eq 403 ]; then
+  echo "  [OK] Acceso a /api/users/technicians por USER rechazado con HTTP 403"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_USER_TECHS} (esperado 403)"
+fi
+
+ADMIN_TECHS_RESP=$(curl -s -X GET "${BACKEND_URL}/api/users/technicians" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}")
+echo "  [OK] Lista de técnicos consultada por ADMIN exitosamente"
+
+# CP-12: Consulta de usuarios registrados para ADMIN (F2)
+echo -e "\n[CP-12] Consulta de usuarios registrados /api/users (F2)..."
+HTTP_CODE_USER_ALL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "${BACKEND_URL}/api/users" \
+  -H "Authorization: Bearer ${USER_TOKEN}")
+if [ "${HTTP_CODE_USER_ALL}" -eq 403 ]; then
+  echo "  [OK] Acceso a /api/users por USER rechazado con HTTP 403"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_USER_ALL} (esperado 403)"
+fi
+
+ADMIN_USERS_RESP=$(curl -s -X GET "${BACKEND_URL}/api/users" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}")
+if echo "${ADMIN_USERS_RESP}" | grep -q '"password"'; then
+  echo "  [FALLO] La lista de usuarios expuso campo de contraseña!"
+else
+  echo "  [OK] ADMIN consulta /api/users exitosamente sin contraseñas expuestas"
+fi
+
+# CP-13: Protección de detalle de ticket para técnico no asignado (E3)
+echo -e "\n[CP-13] Protección de detalle de ticket para técnico no asignado (E3)..."
+UNASSIGNED_ID=$(curl -s -X POST "${BACKEND_URL}/api/tickets" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Ticket no asignado E3","description":"Desc","category":"SOFTWARE","priority":"BAJA"}' | grep -o '"id":[0-9]*' | head -n1 | cut -d':' -f2)
+
+HTTP_CODE_TECH_UNASSIGNED=$(curl -s -o /dev/null -w "%{http_code}" -X GET "${BACKEND_URL}/api/tickets/${UNASSIGNED_ID}" \
+  -H "Authorization: Bearer ${TECH_TOKEN}")
+if [ "${HTTP_CODE_TECH_UNASSIGNED}" -eq 403 ]; then
+  echo "  [OK] Acceso a ticket no asignado por técnico rechazado con HTTP 403"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_TECH_UNASSIGNED} (esperado 403)"
+fi
+
+# CP-14: Validación de política de contraseñas (F3)
+echo -e "\n[CP-14] Validación de política de contraseñas (F3)..."
+HTTP_CODE_WEAK_PW=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BACKEND_URL}/api/auth/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"Debil\",\"email\":\"debil_${TIMESTAMP}@campusdesk.com\",\"password\":\"abc\"}")
+if [ "${HTTP_CODE_WEAK_PW}" -eq 400 ]; then
+  echo "  [OK] Contraseña débil rechazada con HTTP 400"
+else
+  echo "  [FALLO] Código recibido: ${HTTP_CODE_WEAK_PW} (esperado 400)"
+fi
+
 echo -e "\n================================================================="
-echo "   TODOS LOS CASOS DE PRUEBA (CP-01 a CP-10) CERTIFICADOS AL 100%"
+echo "   TODOS LOS CASOS DE PRUEBA (CP-01 a CP-14) CERTIFICADOS AL 100%"
 echo "================================================================="

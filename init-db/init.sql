@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_history_ticket_id ON ticket_history(ticket_id);
 -- 'Password123!'   -> $2a$10$GCKwsUFT/VsLrdYILcp8YeIaKcc2mQ4aQE/.5Ytw1bMZpakq8qPvG
 
 INSERT INTO users (id, name, email, password, role)
-VALUES 
+VALUES
     (
         1,
         'Super Administrador CAMPUSDESK',

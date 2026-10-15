@@ -87,4 +87,22 @@ public class UserService {
                         .build())
                 .toList();
     }
+
+    /**
+     * Obtiene la lista completa de todos los usuarios registrados (F2).
+     * Exclusivo para administradores. Retorna DTO seguro sin contraseñas ni hashes.
+     *
+     * @return Lista de todos los usuarios registrados.
+     */
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> getAllUsers() {
+        return userRepository.findAll().stream()
+                .map(u -> UserResponseDTO.builder()
+                        .id(u.getId())
+                        .name(u.getName())
+                        .email(u.getEmail())
+                        .role(u.getRole())
+                        .build())
+                .toList();
+    }
 }

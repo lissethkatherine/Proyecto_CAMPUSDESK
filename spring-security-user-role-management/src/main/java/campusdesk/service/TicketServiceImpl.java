@@ -2,6 +2,7 @@ package campusdesk.service;
 
 import campusdesk.dto.CreateTicketDTO;
 import campusdesk.dto.TicketResponseDTO;
+import campusdesk.dto.UpdateTicketDTO;
 import campusdesk.dto.UserResponseDTO;
 import campusdesk.entity.Role;
 import campusdesk.entity.Ticket;
@@ -41,13 +42,15 @@ public class TicketServiceImpl implements TicketService {
     public TicketResponseDTO createTicket(CreateTicketDTO dto, String userEmail) {
         User solicitante = findUserByEmail(userEmail);
 
-        // Todo nuevo ticket inicia estrictamente en ABIERTA
+        // Todo nuevo ticket inicia en ABIERTA por regla de negocio (RF-03)
+        TicketStatus initialStatus = (dto.getStatus() != null) ? dto.getStatus() : TicketStatus.ABIERTA;
+
         Ticket ticket = Ticket.builder()
                 .title(dto.getTitle())
                 .description(dto.getDescription())
                 .solicitante(solicitante)
                 .tecnico(null)
-                .status(TicketStatus.ABIERTA)
+                .status(initialStatus)
                 .priority(dto.getPriority())
                 .category(dto.getCategory())
                 .build();
@@ -58,13 +61,13 @@ public class TicketServiceImpl implements TicketService {
         TicketHistory history = TicketHistory.builder()
                 .ticket(savedTicket)
                 .estadoAnterior(null)
-                .estadoNuevo(TicketStatus.ABIERTA)
+                .estadoNuevo(initialStatus)
                 .autor(solicitante)
                 .comentarioTransicion("Creación de incidencia por el solicitante")
                 .build();
         ticketHistoryRepository.save(history);
 
-        log.info("Ticket #{} creado exitosamente por [{}] con estado ABIERTA", savedTicket.getId(), userEmail);
+        log.info("Ticket #{} creado exitosamente por [{}] con estado {}", savedTicket.getId(), userEmail, initialStatus);
         return mapToResponse(savedTicket);
     }
 
@@ -73,16 +76,21 @@ public class TicketServiceImpl implements TicketService {
     public TicketResponseDTO assignTechnician(Long ticketId, Long tecnicoId, String adminEmail) {
         User admin = findUserByEmail(adminEmail);
 
-        // Solo ADMIN puede asignar técnicos
+        // Solo ADMIN puede asignar o reasignar técnicos
         if (admin.getRole() != Role.ADMIN) {
             throw new UnauthorizedTicketActionException("Solo un administrador puede asignar técnicos a una incidencia");
         }
 
         Ticket ticket = findTicketById(ticketId);
 
-        // Ticket cerrado es inmutable
+        // Ticket cerrado es inmutable (409)
         if (ticket.getStatus() == TicketStatus.CERRADA) {
             throw new TicketClosedException("No se puede modificar una incidencia en estado CERRADA");
+        }
+
+        // E1: Únicamente se permite asignar o reasignar cuando el ticket está ABIERTA o ASIGNADA (409 para EN_PROCESO, RESUELTA)
+        if (ticket.getStatus() != TicketStatus.ABIERTA && ticket.getStatus() != TicketStatus.ASIGNADA) {
+            throw new InvalidStateTransitionException("Solo se permite asignar o reasignar técnicos cuando la incidencia está en estado ABIERTA o ASIGNADA");
         }
 
         User tecnico = userRepository.findById(tecnicoId)
@@ -97,13 +105,14 @@ public class TicketServiceImpl implements TicketService {
         ticket.setStatus(TicketStatus.ASIGNADA);
         Ticket updatedTicket = ticketRepository.save(ticket);
 
-        // Auditoría automática
+        // Auditoría automática distinguiendo asignación inicial de reasignación
+        String prefix = estadoAnterior == TicketStatus.ASIGNADA ? "Técnico reasignado: " : "Técnico asignado: ";
         TicketHistory history = TicketHistory.builder()
                 .ticket(updatedTicket)
                 .estadoAnterior(estadoAnterior)
                 .estadoNuevo(TicketStatus.ASIGNADA)
                 .autor(admin)
-                .comentarioTransicion("Técnico asignado: " + tecnico.getName() + " (" + tecnico.getEmail() + ")")
+                .comentarioTransicion(prefix + tecnico.getName() + " (" + tecnico.getEmail() + ")")
                 .build();
         ticketHistoryRepository.save(history);
 
@@ -119,25 +128,39 @@ public class TicketServiceImpl implements TicketService {
 
         TicketStatus estadoActual = ticket.getStatus();
 
-        // 1. Inmutabilidad de tickets cerrados
+        // 1. Inmutabilidad de tickets cerrados (HTTP 409)
         if (estadoActual == TicketStatus.CERRADA) {
             throw new TicketClosedException("No se puede modificar una incidencia en estado CERRADA");
         }
 
-        // Si el estado es el mismo, no hay transición
+        // E2: Intentar establecer el mismo estado debe rechazarse como transición inválida (HTTP 409)
         if (estadoActual == newStatus) {
-            return mapToResponse(ticket);
+            throw new InvalidStateTransitionException("La incidencia ya se encuentra en estado " + newStatus);
         }
 
-        // 2. Validación de la Máquina de Estados (RF-04)
+        // 2. Validación de la Máquina de Estados y Permisos RBAC (E2 / RF-04)
         switch (newStatus) {
+            case ABIERTA -> {
+                if (user.getRole() != Role.ADMIN) {
+                    throw new UnauthorizedTicketActionException("Solo un administrador puede devolver una incidencia a estado ABIERTA");
+                }
+                ticket.setTecnico(null);
+            }
+            case ASIGNADA -> {
+                if (user.getRole() != Role.ADMIN && !isAssignedTechnician(ticket, user)) {
+                    throw new UnauthorizedTicketActionException("Solo un administrador o el técnico asignado pueden establecer el estado ASIGNADA");
+                }
+                if (ticket.getTecnico() == null) {
+                    throw new InvalidStateTransitionException("No se puede pasar a ASIGNADA sin un técnico asignado");
+                }
+            }
             case EN_PROCESO -> {
                 // Solo desde ASIGNADA
                 if (estadoActual != TicketStatus.ASIGNADA) {
                     throw new InvalidStateTransitionException("Solo se puede pasar a EN_PROCESO desde el estado ASIGNADA");
                 }
-                // Solo el técnico asignado (o admin)
-                if (!isAssignedTechnician(ticket, user) && user.getRole() != Role.ADMIN) {
+                // E2: Solo el técnico asignado. El administrador no puede saltarse las reglas de inicio/resolución
+                if (!isAssignedTechnician(ticket, user)) {
                     throw new UnauthorizedTicketActionException("Solo el técnico asignado puede iniciar la atención del ticket");
                 }
             }
@@ -146,8 +169,8 @@ public class TicketServiceImpl implements TicketService {
                 if (estadoActual != TicketStatus.EN_PROCESO) {
                     throw new InvalidStateTransitionException("Una incidencia solo puede marcarse como RESUELTA si previamente estuvo EN_PROCESO");
                 }
-                // Solo el técnico asignado (o admin)
-                if (!isAssignedTechnician(ticket, user) && user.getRole() != Role.ADMIN) {
+                // E2: Solo el técnico asignado
+                if (!isAssignedTechnician(ticket, user)) {
                     throw new UnauthorizedTicketActionException("Solo el técnico asignado puede marcar la incidencia como RESUELTA");
                 }
             }
@@ -156,8 +179,8 @@ public class TicketServiceImpl implements TicketService {
                 if (estadoActual != TicketStatus.RESUELTA) {
                     throw new InvalidStateTransitionException("Solo se puede cerrar una incidencia que se encuentre en estado RESUELTA");
                 }
-                // Solo el usuario solicitante (o admin)
-                if (!isRequester(ticket, user) && user.getRole() != Role.ADMIN) {
+                // E2: Solo el solicitante puede cerrar la incidencia
+                if (!isRequester(ticket, user)) {
                     throw new UnauthorizedTicketActionException("Solo el usuario solicitante puede cerrar un ticket en estado RESUELTA");
                 }
             }
@@ -192,13 +215,64 @@ public class TicketServiceImpl implements TicketService {
         User user = findUserByEmail(userEmail);
         Ticket ticket = findTicketById(ticketId);
 
-        // Validar acceso: ADMIN puede ver todo; USER solo sus propios tickets; TECHNICIAN asignados o todos en soporte
+        // E3: Validar acceso: ADMIN puede ver todo; USER solo sus propios tickets; TECHNICIAN solo incidencias asignadas
         if (user.getRole() == Role.USER && !isRequester(ticket, user)) {
             throw new UnauthorizedTicketActionException("No tiene permisos para consultar este ticket");
+        }
+        if (user.getRole() == Role.TECHNICIAN && !isAssignedTechnician(ticket, user)) {
+            throw new UnauthorizedTicketActionException("Un técnico solo puede consultar incidencias asignadas a su perfil");
         }
 
         return mapToResponse(ticket);
     }
+
+    @Override
+    @Transactional
+    public TicketResponseDTO updateTicket(Long ticketId, UpdateTicketDTO dto, String userEmail) {
+        User user = findUserByEmail(userEmail);
+        Ticket ticket = findTicketById(ticketId);
+
+        if (ticket.getStatus() == TicketStatus.CERRADA) {
+            throw new TicketClosedException("No se puede modificar una incidencia en estado CERRADA");
+        }
+
+        // F1: Solo permite la edición al solicitante de la incidencia (HTTP 403), o al administrador
+        if (user.getRole() != Role.ADMIN && !isRequester(ticket, user)) {
+            throw new UnauthorizedTicketActionException("Solo el solicitante tiene permisos para editar esta incidencia");
+        }
+
+        // F1: Para el solicitante, solo permite editar cuando el estado es ABIERTA y todavía no hay técnico asignado (HTTP 409)
+        if (user.getRole() != Role.ADMIN && (ticket.getStatus() != TicketStatus.ABIERTA || ticket.getTecnico() != null)) {
+            throw new InvalidStateTransitionException("Solo se pueden editar incidencias en estado ABIERTA y sin técnico asignado");
+        }
+
+        ticket.setTitle(dto.getTitle());
+        ticket.setDescription(dto.getDescription());
+        ticket.setPriority(dto.getPriority());
+        ticket.setCategory(dto.getCategory());
+
+        // Si se envió un cambio de estado en la edición
+        if (dto.getStatus() != null && dto.getStatus() != ticket.getStatus()) {
+            ticketRepository.save(ticket);
+            return updateStatus(ticketId, dto.getStatus(), "Estado actualizado mediante edición", userEmail);
+        }
+
+        Ticket updatedTicket = ticketRepository.save(ticket);
+
+        // Registro en historial de auditoría
+        TicketHistory history = TicketHistory.builder()
+                .ticket(updatedTicket)
+                .estadoAnterior(ticket.getStatus())
+                .estadoNuevo(ticket.getStatus())
+                .autor(user)
+                .comentarioTransicion("Incidencia editada por " + (user.getRole() == Role.ADMIN ? "el administrador" : "el solicitante"))
+                .build();
+        ticketHistoryRepository.save(history);
+
+        log.info("Ticket #{} editado por [{}]", ticketId, userEmail);
+        return mapToResponse(updatedTicket);
+    }
+
 
     @Override
     @Transactional(readOnly = true)

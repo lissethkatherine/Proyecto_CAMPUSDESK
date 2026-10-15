@@ -11,7 +11,7 @@
   <!-- Contenedor principal de autenticación -->
   <main class="auth-wrapper">
     <div class="auth-card">
-      
+
       <!-- Logo y título estilo NEXO -->
       <header class="auth-header">
         <div class="auth-logo-box">
@@ -64,7 +64,7 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="password">Contraseña (mínimo 8 caracteres)</label>
+          <label class="form-label" for="password">Contraseña (mín. 8 caracteres)</label>
           <input
             type="password"
             id="password"
@@ -73,8 +73,12 @@
             placeholder="••••••••"
             autocomplete="new-password"
             minlength="8"
+            maxlength="100"
             required
           >
+          <small style="display: block; color: #64748B; font-size: 11.5px; margin-top: 4px;">
+            Requisitos: 8 a 100 caracteres, al menos una mayúscula, una minúscula y un número.
+          </small>
         </div>
 
         <button type="submit" id="submitBtn" class="btn-primary">
@@ -107,7 +111,7 @@
     const alertBox = document.getElementById('alertBox');
     const submitBtn = document.getElementById('submitBtn');
 
-    const BASE_URL = localStorage.getItem('api_url') 
+    const BASE_URL = localStorage.getItem('api_url')
       || (window.location.port === '5506' ? window.location.origin : 'http://localhost:8056');
     const API_URL = `${BASE_URL}/auth/register`;
 
@@ -135,10 +139,12 @@
         return;
       }
 
-      if (password.length < 8) {
-        showAlert('La contraseña debe tener al menos 8 caracteres.');
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,100}$/;
+      if (!passwordRegex.test(password)) {
+        showAlert('La contraseña debe tener entre 8 y 100 caracteres, e incluir al menos una mayúscula, una minúscula y un número.');
         return;
       }
+
 
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<span>Registrando cuenta...</span>';

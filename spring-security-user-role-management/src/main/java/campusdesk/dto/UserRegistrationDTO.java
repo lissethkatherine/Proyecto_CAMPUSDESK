@@ -2,6 +2,7 @@ package campusdesk.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,6 +28,9 @@ public class UserRegistrationDTO {
     private String email;
 
     @NotBlank(message = "Password is required")
-    @Size(min = 8, max = 100, message = "Password must be between 8 and 100 characters")
+    @Pattern(
+        regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,100}$",
+        message = "La contraseña debe tener entre 8 y 100 caracteres, e incluir al menos una letra mayúscula, una letra minúscula y un número"
+    )
     private String password;
 }

@@ -43,7 +43,7 @@ public class DashboardServiceImpl implements DashboardService {
             cerradas = ticketRepository.countByStatus(TicketStatus.CERRADA);
             total = ticketRepository.count();
         } else if (user.getRole() == Role.TECHNICIAN) {
-            abiertas = ticketRepository.countByStatus(TicketStatus.ABIERTA);
+            abiertas = ticketRepository.countByTecnicoIdAndStatus(user.getId(), TicketStatus.ABIERTA);
             asignadas = ticketRepository.countByTecnicoIdAndStatus(user.getId(), TicketStatus.ASIGNADA);
             enProceso = ticketRepository.countByTecnicoIdAndStatus(user.getId(), TicketStatus.EN_PROCESO);
             resueltas = ticketRepository.countByTecnicoIdAndStatus(user.getId(), TicketStatus.RESUELTA);

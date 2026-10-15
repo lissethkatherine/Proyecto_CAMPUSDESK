@@ -22,15 +22,19 @@ public class JwtTokenProvider {
     private final JWTVerifier verifier;
 
     public JwtTokenProvider(
-            @Value("${security.jwt.secret:CampusDesk_Secret_Key_2026}") String secretKey,
+            @Value("${security.jwt.secret:}") String secretKey,
             @Value("${security.jwt.issuer:CampusDesk_API}") String issuer,
             @Value("${security.jwt.expiration-ms:86400000}") long expirationTimeInMs
     ) {
+        if (secretKey == null || secretKey.trim().length() < 32) {
+            throw new IllegalStateException("JWT_SECRET must be configured and contain at least 32 characters");
+        }
         this.issuer = issuer;
         this.expirationTimeInMs = expirationTimeInMs;
-        this.algorithm = Algorithm.HMAC256(secretKey);
+        this.algorithm = Algorithm.HMAC256(secretKey.trim());
         this.verifier = JWT.require(algorithm).withIssuer(issuer).build();
     }
+
 
     /**
      * Genera un token JWT incluyendo subject (email) y claim del rol.

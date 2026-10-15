@@ -21,5 +21,7 @@ public interface TicketService {
 
     TicketResponseDTO getTicketById(Long ticketId, String userEmail);
 
+    TicketResponseDTO updateTicket(Long ticketId, campusdesk.dto.UpdateTicketDTO dto, String userEmail);
+
     List<TicketResponseDTO> getTickets(TicketStatus status, TicketPriority priority, TicketCategory category, String userEmail);
 }
